@@ -35,10 +35,24 @@ inputs:
     default: "30"
   system-power:
     description: >-
-      System power collector: "none" or "ipmi" (in-band `ipmitool sdr list` through /dev/ipmi0,
-      run as root inside a small container; Galaxy only). Writes ipmi_power.csv next to the chip CSVs.
+      System power collectors, comma-separated: "none", "ipmi" (in-band `ipmitool sdr list` through
+      /dev/ipmi0, run as root inside a small container) and/or "redfish" (BMC over HTTPS; needs
+      bmc-ip and bmc-password, skipped with a warning when either is missing). Galaxy only.
+      Writes ipmi_power.csv / bmc_power.csv next to the chip CSVs.
     required: false
     default: "none"
+  bmc-ip:
+    description: BMC address for the redfish collector (from ci_boards.json).
+    required: false
+    default: ""
+  bmc-user:
+    description: BMC login for the redfish collector.
+    required: false
+    default: "root"
+  bmc-password:
+    description: BMC password for the redfish collector (pass a repository secret, never a literal).
+    required: false
+    default: ""
   ipmi-image:
     description: Container image used to run ipmitool (must be able to apt-get install it, or have it).
     required: false
@@ -80,7 +94,7 @@ runs:
 
         # System power (Galaxy): in-band IPMI needs root and /dev/ipmi0; the runner user has
         # neither, so poll from a throwaway container. Same CSV layout as the team's IPMI logs.
-        if [ "${{ inputs.system-power }}" = "ipmi" ]; then
+        case ",${{ inputs.system-power }}," in *,ipmi,*)
           if [ -e /dev/ipmi0 ]; then
             docker run -d --rm --name "powerci-ipmi-${{ inputs.name }}" --user root \
               --device /dev/ipmi0 -v "$GITHUB_WORKSPACE:/w" -w "/w/telemetry_output/${{ inputs.name }}" \
@@ -89,8 +103,22 @@ runs:
               > ipmi_container.log 2>&1 || echo "::warning::could not start the IPMI poller container"
           else
             echo "::warning::system-power=ipmi requested but /dev/ipmi0 is not present on this runner"
-          fi
-        fi
+          fi ;;
+        esac
+        # Redfish: the runner host talks to its own BMC over the lab network. The password comes
+        # from a repository secret through the bmc-password input; without it the collector is skipped.
+        case ",${{ inputs.system-power }}," in *,redfish,*)
+          if [ -z "${{ inputs.bmc-ip }}" ]; then
+            echo "::warning::system-power=redfish requested but no bmc-ip for this board in ci_boards.json"
+          elif [ -z "${{ inputs.bmc-password }}" ]; then
+            echo "::warning::system-power=redfish requested but the BMC password secret is not set"
+          else
+            BMC_PASSWORD="${{ inputs.bmc-password }}" nohup "${{ inputs.venv-dir }}/bin/python3" \
+              "$GITHUB_WORKSPACE/scripts/poll_bmc_redfish.py" --ip "${{ inputs.bmc-ip }}" --user "${{ inputs.bmc-user }}" \
+              --out bmc_power.csv --interval 1 > redfish.log 2>&1 < /dev/null &
+            echo "$!" > redfish.pid
+          fi ;;
+        esac
 
         # Idle window: chips at rest under telemetry, so every artifact carries its own
         # idle reference right before the workload.
@@ -156,8 +184,16 @@ runs:
           echo "No running telemetry process found."
         fi
 
+        # Stop the Redfish poller (SIGTERM → flush + exit).
+        if [ -f "$TELEM_DIR/redfish.pid" ]; then
+          RPID="$(cat "$TELEM_DIR/redfish.pid")"
+          kill -TERM "$RPID" 2>/dev/null || true
+          for _ in $(seq 1 10); do kill -0 "$RPID" 2>/dev/null || break; sleep 1; done
+          rm -f "$TELEM_DIR/redfish.pid"
+          [ -f "$TELEM_DIR/bmc_power.csv" ] && echo "Redfish rows: $(($(wc -l < "$TELEM_DIR/bmc_power.csv") - 1))" || echo "::warning::no bmc_power.csv produced"
+        fi
         # Stop the IPMI poller (SIGTERM → it flushes the CSV and exits; the container removes itself).
-        if [ "${{ inputs.system-power }}" = "ipmi" ] && docker ps -q -f "name=powerci-ipmi-${{ inputs.name }}" | grep -q .; then
+        if docker ps -q -f "name=powerci-ipmi-${{ inputs.name }}" | grep -q .; then
           docker stop -t 20 "powerci-ipmi-${{ inputs.name }}" >/dev/null || true
           [ -f "$TELEM_DIR/ipmi_power.csv" ] && echo "IPMI rows: $(($(wc -l < "$TELEM_DIR/ipmi_power.csv") - 1))" || echo "::warning::no ipmi_power.csv produced"
         fi

@@ -11,9 +11,13 @@ name: Workload Telemetry
 #
 # Each board is one job; subtests run sequentially inside it, each wrapped in its own
 # telemetry capture by the power-telemetry-subtest action: pyluwen chip telemetry on
-# every board, plus in-band IPMI system power (Power_PSU/UBB/MB/CPU/Memory/FAN/Total)
-# where ci_boards.json sets "system-power": "ipmi" (Galaxy). Nothing else is needed
-# on the runner: both collectors live in scripts/ and run from a venv or a container.
+# every board, plus system power where ci_boards.json asks for it (Galaxy):
+#   "system-power": "ipmi"          in-band ipmitool through /dev/ipmi0, no credentials
+#   "system-power": "ipmi,redfish"  additionally the BMC over HTTPS; needs "bmc-ip" on the
+#                                   board entry and the repository secret POWER_CI_BMC_PASSWORD
+#                                   (optional variable POWER_CI_BMC_USER, default root).
+# Nothing else is needed on the runner: all collectors live in scripts/ (standard
+# library) and run from the venv or a throwaway container.
 # A GitHub job is limited to 6 hours, so long model sessions (Galaxy) must be split
 # into several jobs; keep each subtest well under that.
 
@@ -171,6 +175,9 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ matrix.config.system-power || 'none' }}
+          bmc-ip: ${{ matrix.config.bmc-ip || '' }}
+          bmc-user: ${{ vars.POWER_CI_BMC_USER || 'root' }}
+          bmc-password: ${{ secrets.POWER_CI_BMC_PASSWORD }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -194,6 +201,9 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ matrix.config.system-power || 'none' }}
+          bmc-ip: ${{ matrix.config.bmc-ip || '' }}
+          bmc-user: ${{ vars.POWER_CI_BMC_USER || 'root' }}
+          bmc-password: ${{ secrets.POWER_CI_BMC_PASSWORD }}
           timeout-minutes: "65"
           run: |
             docker run \
