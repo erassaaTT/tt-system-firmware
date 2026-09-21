@@ -13,9 +13,10 @@ name: Workload Telemetry
 # telemetry capture by the power-telemetry-subtest action: pyluwen chip telemetry on
 # every board, plus system power where ci_boards.json asks for it (Galaxy):
 #   "system-power": "ipmi"          in-band ipmitool through /dev/ipmi0, no credentials
-#   "system-power": "ipmi,redfish"  additionally the BMC over HTTPS; needs "bmc-ip" on the
-#                                   board entry and the repository secret POWER_CI_BMC_PASSWORD
-#                                   (optional variable POWER_CI_BMC_USER, default root).
+#   "system-power": "ipmi,redfish"  additionally the BMC over HTTPS; the address comes from the
+#                                   bmc_ip dispatch input (the dashboard passes it from its Systems
+#                                   page) or "bmc-ip" on the board entry; the login is the repository
+#                                   secret POWER_CI_BMC_PASSWORD (variable POWER_CI_BMC_USER, default root).
 # Nothing else is needed on the runner: all collectors live in scripts/ (standard
 # library) and run from the venv or a throwaway container.
 # A GitHub job is limited to 6 hours, so long model sessions (Galaxy) must be split
@@ -49,6 +50,12 @@ on:
         description: Free-text tag recorded in the manifest (e.g. "weekly", "fw 19.15 qual").
         type: string
         default: ""
+      bmc_ip:
+        description: >-
+          BMC address for the Galaxy job's redfish collector (the Power CI Dashboard passes it from its
+          Systems page). Overrides "bmc-ip" in ci_boards.json; empty = use ci_boards.json or skip redfish.
+        type: string
+        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
@@ -60,6 +67,7 @@ env:
   POWER_CI_ITERATIONS: ${{ inputs.iterations || '100' }}
   POWER_CI_IDLE_SECONDS: ${{ inputs.idle_seconds || '30' }}
   POWER_CI_TAG: ${{ inputs.tag || '' }}
+  POWER_CI_BMC_IP: ${{ inputs.bmc_ip || '' }}
 
 jobs:
   gen-config:
@@ -175,7 +183,7 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ matrix.config.system-power || 'none' }}
-          bmc-ip: ${{ matrix.config.bmc-ip || '' }}
+          bmc-ip: ${{ env.POWER_CI_BMC_IP || matrix.config.bmc-ip || '' }}
           bmc-user: ${{ vars.POWER_CI_BMC_USER || 'root' }}
           bmc-password: ${{ secrets.POWER_CI_BMC_PASSWORD }}
           timeout-minutes: "65"
@@ -201,7 +209,7 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ matrix.config.system-power || 'none' }}
-          bmc-ip: ${{ matrix.config.bmc-ip || '' }}
+          bmc-ip: ${{ env.POWER_CI_BMC_IP || matrix.config.bmc-ip || '' }}
           bmc-user: ${{ vars.POWER_CI_BMC_USER || 'root' }}
           bmc-password: ${{ secrets.POWER_CI_BMC_PASSWORD }}
           timeout-minutes: "65"

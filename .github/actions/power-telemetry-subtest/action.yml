@@ -215,6 +215,7 @@ runs:
           "exit_code": $RC,
           "idle_seconds": ${{ inputs.idle-seconds }},
           "system_power": "${{ inputs.system-power }}",
+          "bmc_ip": "${{ inputs.bmc-ip }}",
           "telemetry_started_at": "$(cat "$TELEM_DIR/telemetry_started_at" 2>/dev/null)",
           "workload_started_at": "$(cat "$TELEM_DIR/workload_started_at" 2>/dev/null)",
           "workload_ended_at": "$(cat "$TELEM_DIR/workload_ended_at" 2>/dev/null)",
