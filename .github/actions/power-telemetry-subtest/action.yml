@@ -1,16 +1,18 @@
 name: Power telemetry subtest
 description: >-
   Run one workload under telemetry collection. Starts read_telemetry.py in the
-  background (tagged with the given workload), runs the supplied command, then
-  stops telemetry cleanly and uploads the CSVs + log as an artifact. Each call
-  writes to its own telemetry_output/<name> dir so sequential subtests in the
+  background (tagged with the given workload), captures a short idle window, runs the
+  supplied command with its output saved to workload.log, then stops telemetry cleanly
+  and uploads CSVs, logs, the environment snapshot and a manifest as one artifact.
+  Each call writes to its own telemetry_output/<name> dir so sequential subtests in the
   same job don't clobber each other.
 
 inputs:
   name:
     description: >-
       Subtest name. Used for the per-subtest output dir (telemetry_output/<name>)
-      and the artifact name. Keep it filesystem-safe (e.g. didt_resnet_conv).
+      and the artifact name. Keep it filesystem-safe and stable (the Power CI
+      Dashboard maps it to a workload).
     required: true
   workload:
     description: Workload label passed to read_telemetry.py --workload (stamped onto every CSV row).
@@ -26,6 +28,10 @@ inputs:
   venv-dir:
     description: Path to the pre-created Python venv containing pyluwen + pandas.
     required: true
+  idle-seconds:
+    description: Seconds of idle telemetry to capture before the workload starts (0 to skip).
+    required: false
+    default: "30"
   timeout-minutes:
     description: Hard timeout for the subtest command (composite steps can't use timeout-minutes, so we wrap with `timeout`).
     required: false
@@ -41,9 +47,8 @@ runs:
         TELEM_DIR="${GITHUB_WORKSPACE}/telemetry_output/${{ inputs.name }}"
         mkdir -p "$TELEM_DIR"
         cd "$TELEM_DIR"
-        # Launch the telemetry script in the background. The runner user already
-        # has access to /dev/tenstorrent (same access other workflows use via
-        # pyluwen), so no sudo is required.
+        # The runner user already has access to /dev/tenstorrent (same access other
+        # workflows use via pyluwen), so no sudo is required.
         nohup "${{ inputs.venv-dir }}/bin/python3" \
           "$GITHUB_WORKSPACE/scripts/read_telemetry.py" \
           --csv telemetry \
@@ -51,10 +56,10 @@ runs:
           > telemetry.log 2>&1 < /dev/null &
         TELEM_PID=$!
         echo "$TELEM_PID" > telemetry.pid
+        date -u +%Y-%m-%dT%H:%M:%SZ > telemetry_started_at
 
         # Give the script a moment to detect chips and start logging.
         sleep 5
-
         if ! kill -0 "$TELEM_PID" 2>/dev/null; then
           echo "Telemetry process failed to start. Log:"
           cat telemetry.log || true
@@ -62,19 +67,39 @@ runs:
         fi
         echo "Started telemetry collection for '${{ inputs.name }}' (PID $TELEM_PID)"
 
+        # Idle window: chips at rest under telemetry, so every artifact carries its own
+        # idle reference right before the workload.
+        IDLE="${{ inputs.idle-seconds }}"
+        if [ "${IDLE:-0}" -gt 0 ]; then
+          echo "Capturing ${IDLE}s of idle telemetry"
+          sleep "$IDLE"
+        fi
+
     - name: "[${{ inputs.name }}] Run subtest"
+      id: run
       shell: bash
       run: |
-        set -euxo pipefail
-        # The command may contain quotes/newlines, so stage it to a file and run
-        # it under `timeout` (composite-action steps can't use `timeout-minutes`).
+        set -uxo pipefail
+        TELEM_DIR="${GITHUB_WORKSPACE}/telemetry_output/${{ inputs.name }}"
+        # The command may contain quotes/newlines, so stage it to a file and run it
+        # under `timeout` (composite-action steps can't use `timeout-minutes`). Output is
+        # kept in workload.log for the artifact (pass/fail markers, perf numbers).
         SUBTEST_SH="$(mktemp)"
         cat > "$SUBTEST_SH" <<'POWER_TELEM_SUBTEST_EOF'
         ${{ inputs.run }}
         POWER_TELEM_SUBTEST_EOF
-        timeout --preserve-status "${{ inputs.timeout-minutes }}m" bash "$SUBTEST_SH"
+        cp "$SUBTEST_SH" "$TELEM_DIR/command.sh"
+        date -u +%Y-%m-%dT%H:%M:%SZ > "$TELEM_DIR/workload_started_at"
+        set +e
+        timeout --preserve-status "${{ inputs.timeout-minutes }}m" bash "$SUBTEST_SH" 2>&1 | tee "$TELEM_DIR/workload.log"
+        RC=${PIPESTATUS[0]}
+        set -e
+        date -u +%Y-%m-%dT%H:%M:%SZ > "$TELEM_DIR/workload_ended_at"
+        echo "$RC" > "$TELEM_DIR/workload_exit_code"
+        echo "exit_code=$RC" >> "$GITHUB_OUTPUT"
+        exit "$RC"
 
-    - name: "[${{ inputs.name }}] Stop telemetry"
+    - name: "[${{ inputs.name }}] Stop telemetry and write manifest"
       if: ${{ always() }}
       shell: bash
       run: |
@@ -106,17 +131,49 @@ runs:
           echo "No running telemetry process found."
         fi
 
+        # Environment snapshot from the job (tt-smi.json, host.json) travels with every subtest.
+        cp "${GITHUB_WORKSPACE}"/telemetry_output/env/*.json "$TELEM_DIR"/ 2>/dev/null || true
+
+        RC="$(cat "$TELEM_DIR/workload_exit_code" 2>/dev/null || echo 124)"
+        STATUS="failed"; [ "$RC" = "0" ] && STATUS="passed"
+        CMD_JSON="$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1]).read().strip()))' "$TELEM_DIR/command.sh" 2>/dev/null || echo '""')"
+        cat > "$TELEM_DIR/manifest.json" <<MANIFEST
+        {
+          "schema": "power-ci-manifest/1",
+          "workload": "${{ inputs.name }}",
+          "workload_label": "${{ inputs.workload }}",
+          "board": "${{ inputs.board }}",
+          "host": "$(hostname)",
+          "status": "$STATUS",
+          "exit_code": $RC,
+          "idle_seconds": ${{ inputs.idle-seconds }},
+          "telemetry_started_at": "$(cat "$TELEM_DIR/telemetry_started_at" 2>/dev/null)",
+          "workload_started_at": "$(cat "$TELEM_DIR/workload_started_at" 2>/dev/null)",
+          "workload_ended_at": "$(cat "$TELEM_DIR/workload_ended_at" 2>/dev/null)",
+          "command": $CMD_JSON,
+          "run_id": "${GITHUB_RUN_ID}",
+          "run_url": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
+          "fw_repo_sha": "${GITHUB_SHA}"
+        }
+        MANIFEST
+        rm -f "$TELEM_DIR"/telemetry_started_at "$TELEM_DIR"/workload_started_at "$TELEM_DIR"/workload_ended_at "$TELEM_DIR"/workload_exit_code "$TELEM_DIR"/telemetry.pid
+
+        echo "--- Manifest (${{ inputs.name }}) ---"
+        cat "$TELEM_DIR/manifest.json"
         echo "--- Telemetry log (${{ inputs.name }}) ---"
         cat "$TELEM_DIR/telemetry.log" || true
         echo "--- Generated files (${{ inputs.name }}) ---"
         ls -la "$TELEM_DIR" || true
 
-    - name: "[${{ inputs.name }}] Upload telemetry CSV"
+    - name: "[${{ inputs.name }}] Upload telemetry artifact"
       if: ${{ always() }}
       uses: actions/upload-artifact@v4
       with:
         name: power_CI_telemetry-${{ inputs.name }}-${{ inputs.board }}
         if-no-files-found: warn
+        retention-days: 90
         path: |
           telemetry_output/${{ inputs.name }}/*.csv
-          telemetry_output/${{ inputs.name }}/telemetry.log
+          telemetry_output/${{ inputs.name }}/*.json
+          telemetry_output/${{ inputs.name }}/*.log
+          telemetry_output/${{ inputs.name }}/command.sh
