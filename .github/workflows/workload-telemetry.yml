@@ -10,9 +10,12 @@ name: Workload Telemetry
 #   * pull_request closed (merged only) -- one run after every merge to main.
 #
 # Each board is one job; subtests run sequentially inside it, each wrapped in its own
-# telemetry capture by the power-telemetry-subtest action. A GitHub job is limited to
-# 6 hours, so long model sessions (Galaxy) must be split into several jobs; keep each
-# subtest well under that.
+# telemetry capture by the power-telemetry-subtest action: pyluwen chip telemetry on
+# every board, plus in-band IPMI system power (Power_PSU/UBB/MB/CPU/Memory/FAN/Total)
+# where ci_boards.json sets "system-power": "ipmi" (Galaxy). Nothing else is needed
+# on the runner: both collectors live in scripts/ and run from a venv or a container.
+# A GitHub job is limited to 6 hours, so long model sessions (Galaxy) must be split
+# into several jobs; keep each subtest well under that.
 
 on:
   pull_request:
@@ -167,6 +170,7 @@ jobs:
           board: ${{ matrix.config.board }}
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ matrix.config.system-power || 'none' }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -189,6 +193,7 @@ jobs:
           board: ${{ matrix.config.board }}
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ matrix.config.system-power || 'none' }}
           timeout-minutes: "65"
           run: |
             docker run \
