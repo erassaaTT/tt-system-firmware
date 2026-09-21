@@ -50,6 +50,12 @@ on:
         description: Free-text tag recorded in the manifest (e.g. "weekly", "fw 19.15 qual").
         type: string
         default: ""
+      system_power:
+        description: >-
+          System power collectors for this run: "auto" (per board from ci_boards.json), "none", "ipmi",
+          "redfish" or "ipmi,redfish". PCIe boards have no BMC; asking for ipmi/redfish there only warns.
+        type: string
+        default: auto
       bmc_ip:
         description: >-
           BMC address for the Galaxy job's redfish collector (the Power CI Dashboard passes it from its
@@ -68,6 +74,7 @@ env:
   POWER_CI_IDLE_SECONDS: ${{ inputs.idle_seconds || '30' }}
   POWER_CI_TAG: ${{ inputs.tag || '' }}
   POWER_CI_BMC_IP: ${{ inputs.bmc_ip || '' }}
+  POWER_CI_SYSTEM_POWER: ${{ inputs.system_power || 'auto' }}
 
 jobs:
   gen-config:
@@ -182,7 +189,7 @@ jobs:
           board: ${{ matrix.config.board }}
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
-          system-power: ${{ matrix.config.system-power || 'none' }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           bmc-ip: ${{ env.POWER_CI_BMC_IP || matrix.config.bmc-ip || '' }}
           bmc-user: ${{ vars.POWER_CI_BMC_USER || 'root' }}
           bmc-password: ${{ secrets.POWER_CI_BMC_PASSWORD }}
@@ -208,7 +215,7 @@ jobs:
           board: ${{ matrix.config.board }}
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
-          system-power: ${{ matrix.config.system-power || 'none' }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           bmc-ip: ${{ env.POWER_CI_BMC_IP || matrix.config.bmc-ip || '' }}
           bmc-user: ${{ vars.POWER_CI_BMC_USER || 'root' }}
           bmc-password: ${{ secrets.POWER_CI_BMC_PASSWORD }}
