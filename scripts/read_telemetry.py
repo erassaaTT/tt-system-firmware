@@ -67,7 +67,7 @@ def extract_top_gddr(value, controller_id):
 def get_telemetry(telem_dicts, workload: str = "") -> dict:
     results = []
 
-    for map in telem_dicts:
+    for pci_index, map in enumerate(telem_dicts):
         telem = {}
 
         # Timestamp
@@ -75,6 +75,10 @@ def get_telemetry(telem_dicts, workload: str = "") -> dict:
 
         # Workload label (free-form string supplied by the caller)
         telem["WORKLOAD"] = workload
+
+        # Position in the detected-device list: on Galaxy every chip reports the same
+        # BOARD_ID, so this is what tells the 32 chips apart in the shared CSV.
+        telem["PCI_INDEX"] = pci_index
 
         # Board id
         telem["BOARD_ID"] = (
@@ -219,6 +223,7 @@ if __name__ == "__main__":
                                     {
                                         "TIMESTAMP": time.ctime(),
                                         "WORKLOAD": args.workload,
+                                        "PCI_INDEX": -1,
                                         "BOARD_ID": -1,
                                         "VCORE": -1,
                                         "TDC": -1,
