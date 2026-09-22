@@ -202,8 +202,18 @@ jobs:
           set -uxo pipefail
           ENV_DIR="${{ github.workspace }}/telemetry_output/env"
           mkdir -p "$ENV_DIR"
+          # tt-smi: `-f FILE` writes the snapshot to FILE; `-s` dumps it to stdout instead (and wins if
+          # both are given), so use -f alone and fall back to capturing -s output.
           if [ -x "$VENV_DIR/bin/tt-smi" ]; then
-            "$VENV_DIR/bin/tt-smi" -s -f "$ENV_DIR/tt-smi.json" || echo "::warning::tt-smi snapshot failed"
+            "$VENV_DIR/bin/tt-smi" -f "$ENV_DIR/tt-smi.json" > /dev/null 2> "$ENV_DIR/tt-smi.err" || true
+            if [ ! -s "$ENV_DIR/tt-smi.json" ]; then
+              "$VENV_DIR/bin/tt-smi" -s --snapshot_no_tty > "$ENV_DIR/tt-smi.stdout" 2>> "$ENV_DIR/tt-smi.err" || true
+              python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); json.dump(d, open(sys.argv[2],"w"), indent=1)' \
+                "$ENV_DIR/tt-smi.stdout" "$ENV_DIR/tt-smi.json" 2>/dev/null || echo "::warning::tt-smi snapshot failed: $(tail -c 300 "$ENV_DIR/tt-smi.err")"
+              rm -f "$ENV_DIR/tt-smi.stdout"
+            fi
+            rm -f "$ENV_DIR/tt-smi.err"
+            [ -s "$ENV_DIR/tt-smi.json" ] && echo "tt-smi snapshot: $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("host_info",{}).get("Driver"), d.get("host_sw_vers",{}).get("tt_smi"))' "$ENV_DIR/tt-smi.json")"
           fi
           {
             echo "{"
