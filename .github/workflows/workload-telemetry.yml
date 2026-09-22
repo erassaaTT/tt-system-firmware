@@ -39,8 +39,7 @@ on:
         description: >-
           Comma-separated subtest names to run, or "all": resnet_conv, ff1_matmul_with_gelu, lm_head,
           ff1_matmul_no_gelu, bursty1, bursty2, bursty3, bursty4, bursty5, minimal_matmul, sdpa_op, binary_mul,
-          mm_after_non_mm, mla_sdpa, deepseek_v3_mla_matmul, deepseek_v3_gate_matmul (Galaxy mesh only),
-          llama_8b_demo (model workload, ~15 min).
+          mm_after_non_mm, mla_sdpa, deepseek_v3_mla_matmul, deepseek_v3_gate_matmul (Galaxy mesh only).
         type: string
         default: all
       iterations:
@@ -247,8 +246,7 @@ jobs:
       # To add a workload copy one block and set name / run; add its name to the
       # `workloads` input description above. Left out on purpose: tests/didt sdxl_* (skip_for_blackhole),
       # sharded_ff1 (hang repro), Max Util (gtest only on unmerged tt-metal branch rd/max_util, not in the
-      # container), PV / PV-toggle / NOC / ETH virus (t6py run-ttx binaries, not tt-metal), WAN 2.2 power
-      # test (branch cglagovich/wan_power_2 + Wan weights), DeepSeek/Kimi prefill demo (Galaxy dev image). The dashboard matches artifact names to
+      # container), WAN 2.2 power test (unmerged branch + Wan weights). The dashboard matches artifact names to
       # its workload catalog, so keep names stable.
       # ------------------------------------------------------------------------
       - name: resnet_conv subtest
@@ -623,28 +621,6 @@ jobs:
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
-
-      - name: llama_8b_demo subtest  # model workload (tt-metal upstream suite); ~10-20 min; decode tok/s in the log
-        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'llama_8b_demo') }}
-        uses: ./.github/actions/power-telemetry-subtest
-        with:
-          name: llama_8b_demo
-          workload: power_measurement_CI
-          board: ${{ matrix.config.board }}
-          venv-dir: ${{ env.VENV_DIR }}
-          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
-          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
-          timeout-minutes: "45"
-          run: |
-            docker run \
-              --entrypoint pytest \
-              --device /dev/tenstorrent \
-              -v /dev/hugepages-1G:/dev/hugepages-1G \
-              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
-              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
-              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              ${{ matrix.config.metal-image }} \
-                models/tt_transformers/demo/simple_text_demo.py -k "performance and batch-1" --timeout 1200
 
       - name: Cleanup
         if: ${{ always() }}
