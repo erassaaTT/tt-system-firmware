@@ -36,7 +36,10 @@ on:
         type: string
         default: all
       workloads:
-        description: Comma-separated subtest names to run (resnet_conv, ff1_matmul_with_gelu, lm_head), or "all".
+        description: >-
+          Comma-separated subtest names to run, or "all": resnet_conv, ff1_matmul_with_gelu, lm_head,
+          ff1_matmul_no_gelu, duty_cycle, minimal_matmul, sdpa_op, binary_mul, mm_after_non_mm, mla_sdpa,
+          deepseek_v3_mla_matmul, deepseek_v3_gate_matmul (the last two collect only on a Galaxy mesh).
         type: string
         default: all
       iterations:
@@ -239,7 +242,8 @@ jobs:
       # Subtests run sequentially, each wrapped in its own telemetry capture by the
       # power-telemetry-subtest action (idle -> start -> run -> stop -> upload).
       # To add a workload copy one block and set name / run; add its name to the
-      # `workloads` input description above. The dashboard matches artifact names to
+      # `workloads` input description above. tests/didt tests marked skip_for_blackhole
+      # (sdxl_*) and the hang/determinism repros (sharded_ff1) are left out on purpose. The dashboard matches artifact names to
       # its workload catalog, so keep names stable.
       # ------------------------------------------------------------------------
       - name: resnet_conv subtest
@@ -309,6 +313,213 @@ jobs:
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_lm_head_matmul.py::test_lm_head_matmul -k "all" \
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+
+      - name: ff1_matmul_no_gelu subtest
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'ff1_matmul_no_gelu') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: ff1_matmul_no_gelu
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          timeout-minutes: "65"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
+              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
+              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
+              ${{ matrix.config.metal-image }} \
+                tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "all and not with_gelu" \
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+
+      - name: duty_cycle subtest  # one of 3 rep x 6 duty variants; change -k to sweep
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'duty_cycle') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: duty_cycle
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          timeout-minutes: "65"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
+              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
+              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
+              ${{ matrix.config.metal-image }} \
+                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-100x and duty-3" \
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+
+      - name: minimal_matmul subtest
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'minimal_matmul') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: minimal_matmul
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          timeout-minutes: "65"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
+              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
+              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
+              ${{ matrix.config.metal-image }} \
+                tests/didt/test_minimal_matmul.py::test_minimal_matmul -k "all and bf16_HiFi2" \
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+
+      - name: sdpa_op subtest
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'sdpa_op') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: sdpa_op
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          timeout-minutes: "65"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
+              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
+              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
+              ${{ matrix.config.metal-image }} \
+                tests/didt/test_sdpa_op.py::test_sdpa_op -k "all and bf16_HiFi2" \
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+
+      - name: binary_mul subtest
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'binary_mul') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: binary_mul
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          timeout-minutes: "65"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
+              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
+              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
+              ${{ matrix.config.metal-image }} \
+                tests/didt/test_binary_mul.py::test_binary_mul -k "all and with_gelu" \
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+
+      - name: mm_after_non_mm subtest
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'mm_after_non_mm') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: mm_after_non_mm
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          timeout-minutes: "65"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
+              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
+              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
+              ${{ matrix.config.metal-image }} \
+                tests/didt/test_mm_after_non_mm.py::test_ff1_matmul -k "all and with_gelu and loop0" \
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+
+      - name: mla_sdpa subtest  # Blackhole only
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'mla_sdpa') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: mla_sdpa
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          timeout-minutes: "65"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
+              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
+              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
+              ${{ matrix.config.metal-image }} \
+                tests/didt/test_mla_sdpa.py::test_mla_sdpa -k "all" \
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+
+      - name: deepseek_v3_mla_matmul subtest  # Galaxy mesh only (8x4); no test is collected on a single card
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'deepseek_v3_mla_matmul') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: deepseek_v3_mla_matmul
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          timeout-minutes: "65"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
+              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
+              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
+              ${{ matrix.config.metal-image }} \
+                tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul \
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+
+      - name: deepseek_v3_gate_matmul subtest  # Galaxy mesh only (8x4)
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'deepseek_v3_gate_matmul') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: deepseek_v3_gate_matmul
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          timeout-minutes: "65"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
+              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
+              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
+              ${{ matrix.config.metal-image }} \
+                tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
 
       - name: Cleanup
