@@ -49,10 +49,13 @@ on:
         type: string
         default: "100"
       idle_seconds:
-      cooldown_seconds:
         description: Seconds of idle telemetry captured before each workload starts.
         type: string
         default: "30"
+      cooldown_seconds:
+        description: Seconds to keep collecting after each workload exits, so the ramp-down back to idle is captured.
+        type: string
+        default: "20"
       tag:
         description: Free-text tag recorded in the manifest (e.g. "weekly", "fw 19.15 qual").
         type: string
