@@ -1,0 +1,12 @@
+{
+  "_comment": "Power CI run request. Committing a change to this file on a PR branch runs the Workload Telemetry workflow with these parameters (the Power CI Dashboard writes it). Same keys as the workflow_dispatch inputs.",
+  "boards": "all",
+  "workloads": "all",
+  "iterations": "100",
+  "idle_seconds": "30",
+  "system_power": "auto",
+  "bmc_ip": "",
+  "tag": "",
+  "requested_at": "",
+  "requested_by": ""
+}

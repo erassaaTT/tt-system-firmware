@@ -5,9 +5,12 @@ name: Workload Telemetry
 # (Systems Engineering / PPA, SYS-4936), which decides pass/fail against baselines.
 #
 # Triggers:
-#   * workflow_dispatch  -- the Power CI Dashboard fires this on its schedule
-#                           (weekly per board) and on demand, with the inputs below.
-#   * pull_request closed (merged only) -- one run after every merge to main.
+#   * pull_request (opened / synchronize / reopened) -- but the suite only runs when the
+#     pushed commit changed .github/power_ci_dispatch.json. The Power CI Dashboard commits
+#     that file (boards, workloads, collectors, tag) to the PR branch to request a run;
+#     ordinary review pushes do not start workloads. Runs execute on the upstream
+#     self-hosted runners even for PRs from forks.
+#   * workflow_dispatch -- same parameters as inputs, for a branch that lives in this repo.
 #
 # Each board is one job; subtests run sequentially inside it, each wrapped in its own
 # telemetry capture by the power-telemetry-subtest action: pyluwen chip telemetry on
@@ -25,7 +28,9 @@ name: Workload Telemetry
 on:
   pull_request:
     types:
-      - closed
+      - opened
+      - synchronize
+      - reopened
   workflow_dispatch:
     inputs:
       boards:
@@ -67,35 +72,71 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: false
 
-env:
-  POWER_CI_BOARDS: ${{ inputs.boards || 'all' }}
-  POWER_CI_WORKLOADS: ${{ inputs.workloads || 'all' }}
-  POWER_CI_ITERATIONS: ${{ inputs.iterations || '100' }}
-  POWER_CI_IDLE_SECONDS: ${{ inputs.idle_seconds || '30' }}
-  POWER_CI_TAG: ${{ inputs.tag || '' }}
-  POWER_CI_BMC_IP: ${{ inputs.bmc_ip || '' }}
-  POWER_CI_SYSTEM_POWER: ${{ inputs.system_power || 'auto' }}
-
 jobs:
   gen-config:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-24.04
     outputs:
+      run: ${{ steps.params.outputs.run }}
       matrix-config: ${{ steps.gen-config.outputs.matrix-config }}
+      boards: ${{ steps.params.outputs.boards }}
+      workloads: ${{ steps.params.outputs.workloads }}
+      iterations: ${{ steps.params.outputs.iterations }}
+      idle_seconds: ${{ steps.params.outputs.idle_seconds }}
+      system_power: ${{ steps.params.outputs.system_power }}
+      bmc_ip: ${{ steps.params.outputs.bmc_ip }}
+      tag: ${{ steps.params.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
-      - id: gen-config
+        with:
+          fetch-depth: 2
+      - id: params
         shell: bash
+        env:
+          IN_BOARDS: ${{ inputs.boards }}
+          IN_WORKLOADS: ${{ inputs.workloads }}
+          IN_ITERATIONS: ${{ inputs.iterations }}
+          IN_IDLE: ${{ inputs.idle_seconds }}
+          IN_SYSTEM_POWER: ${{ inputs.system_power }}
+          IN_BMC_IP: ${{ inputs.bmc_ip }}
+          IN_TAG: ${{ inputs.tag }}
+        run: |
+          # Parameters come from the workflow_dispatch inputs, or (PR events) from
+          # .github/power_ci_dispatch.json -- and a PR push only runs the suite when that
+          # file is part of the pushed commit. Everything else is a review push: skip.
+          FILE=.github/power_ci_dispatch.json
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RUN=true
+            get() { eval "v=\$$1"; echo "${v:-$2}"; }
+            echo "boards=$(get IN_BOARDS all)"            >> $GITHUB_OUTPUT
+            echo "workloads=$(get IN_WORKLOADS all)"      >> $GITHUB_OUTPUT
+            echo "iterations=$(get IN_ITERATIONS 100)"    >> $GITHUB_OUTPUT
+            echo "idle_seconds=$(get IN_IDLE 30)"         >> $GITHUB_OUTPUT
+            echo "system_power=$(get IN_SYSTEM_POWER auto)" >> $GITHUB_OUTPUT
+            echo "bmc_ip=$(get IN_BMC_IP '')"             >> $GITHUB_OUTPUT
+            echo "tag=$(get IN_TAG '')"                   >> $GITHUB_OUTPUT
+          else
+            if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qx "$FILE"; then RUN=true; else RUN=false; fi
+            echo "PR push; $FILE changed in the pushed commit: $RUN"
+            for k in boards workloads iterations idle_seconds system_power bmc_ip tag; do
+              echo "$k=$(jq -r --arg k "$k" '.[$k] // ""' "$FILE")" >> $GITHUB_OUTPUT
+            done
+          fi
+          echo "run=$RUN" >> $GITHUB_OUTPUT
+      - id: gen-config
+        if: ${{ steps.params.outputs.run == 'true' }}
+        shell: bash
+        env:
+          POWER_CI_BOARDS: ${{ steps.params.outputs.boards }}
         run: |
           # Fan out across the Blackhole boards that have a dedicated power-CI runner
           # label (one runner per board type keeps measurements comparable). The
-          # `boards` input narrows the list. loudbox is excluded while its host is
+          # `boards` parameter narrows the list. loudbox is excluded while its host is
           # powered off; re-add it once the runner is back.
           #
           # NOTE: the job targets `power-ci-label` (e.g. p150a-power-CI), not the bare
           # board label, so the power test always lands on that single runner while it
           # stays shared with the other workflows (metal, hardware-smoke, ...).
-          if [ "$POWER_CI_BOARDS" = "all" ]; then
+          if [ -z "$POWER_CI_BOARDS" ] || [ "$POWER_CI_BOARDS" = "all" ]; then
             FILTER='select(.board != "loudbox")'
           else
             FILTER="select(.board as \$b | \"$POWER_CI_BOARDS\" | split(\",\") | map(gsub(\" \"; \"\")) | index(\$b))"
@@ -107,6 +148,7 @@ jobs:
   power_CI_telemetry:
     name: Power CI on ${{ matrix.config.board }}
     needs: [gen-config]
+    if: ${{ needs.gen-config.outputs.run == 'true' }}
     strategy:
       fail-fast: false
       matrix:
@@ -116,6 +158,12 @@ jobs:
     env:
       LLAMA_INSTRUCT_DIR: /opt/tenstorrent/hf-models/meta-llama/Llama-3.1-8B-Instruct/
       VENV_DIR: ${{ github.workspace }}/.telem-env
+      POWER_CI_WORKLOADS: ${{ needs.gen-config.outputs.workloads || 'all' }}
+      POWER_CI_ITERATIONS: ${{ needs.gen-config.outputs.iterations || '100' }}
+      POWER_CI_IDLE_SECONDS: ${{ needs.gen-config.outputs.idle_seconds || '30' }}
+      POWER_CI_SYSTEM_POWER: ${{ needs.gen-config.outputs.system_power || 'auto' }}
+      POWER_CI_BMC_IP: ${{ needs.gen-config.outputs.bmc_ip || '' }}
+      POWER_CI_TAG: ${{ needs.gen-config.outputs.tag || '' }}
     steps:
       - name: Clean workspace
         # These self-hosted runners are shared with container-based jobs (hardware-smoke,
@@ -168,6 +216,7 @@ jobs:
             echo "  \"run_id\": \"${{ github.run_id }}\","
             echo "  \"run_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\","
             echo "  \"event\": \"${{ github.event_name }}\","
+            echo "  \"pr_number\": \"${{ github.event.pull_request.number }}\","
             echo "  \"tag\": \"$POWER_CI_TAG\""
             echo "}"
           } > "$ENV_DIR/host.json"
