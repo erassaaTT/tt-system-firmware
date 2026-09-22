@@ -39,8 +39,9 @@ on:
         description: >-
           Comma-separated subtest names to run, or "all": resnet_conv, ff1_matmul_with_gelu, lm_head,
           ff1_matmul_no_gelu, bursty1, bursty2, bursty3, bursty4, bursty5, minimal_matmul, sdpa_op, binary_mul,
-          mm_after_non_mm, mla_sdpa, deepseek_v3_mla_matmul, deepseek_v3_gate_matmul (Galaxy mesh only). "validate" only collects every selector
-          inside the container (no hardware run).
+          mm_after_non_mm, mla_sdpa, deepseek_v3_mla_matmul, deepseek_v3_gate_matmul (Galaxy mesh only), wan_16k, wan_24k (SYS-4633 WAN sweep, Galaxy;
+          skipped with a warning while the test is not in the image). "validate" only collects every selector inside the
+          container (no hardware run). Every subtest is collect-checked first and skipped cleanly when absent.
         type: string
         default: all
       iterations:
@@ -321,6 +322,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_resnet_conv.py::test_resnet_conv -k \"all\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -367,6 +370,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_lm_head_matmul.py::test_lm_head_matmul -k \"all\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -390,6 +395,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_ff1_matmul.py::test_ff1_matmul -k \"all and not with_gelu\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -413,6 +420,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-1000x and duty-1\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -437,6 +446,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-1000x and duty-2\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -461,6 +472,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-1000x and duty-3\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -485,6 +498,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-1000x and duty-4\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -509,6 +524,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-1000x and duty-5\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -533,6 +550,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_minimal_matmul.py::test_minimal_matmul -k \"all and bf16_HiFi2\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -556,6 +575,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_sdpa_op.py::test_sdpa_op -k \"all and bf16_HiFi2\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -579,6 +600,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_binary_mul.py::test_binary_mul -k \"all and with_gelu\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -602,6 +625,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_mm_after_non_mm.py::test_ff1_matmul -k \"all and with_gelu and loop0\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -625,6 +650,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_mla_sdpa.py::test_mla_sdpa -k \"all\""
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -648,6 +675,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul"
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -671,6 +700,8 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul"
+          image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -683,6 +714,48 @@ jobs:
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+
+      - name: wan_16k subtest  # SYS-4633 WAN 2.2 seq-len sweep, 16k ring; Galaxy 4x8; skipped until tt-metal branch cglagovich/wan_sweep_seqs is in the image
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'wan_16k') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: wan_16k
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "models/tt_dit/tests/models/wan2_2/test_transformer_wan.py::test_sweep_wan_seqs -k \"blackhole-16k-ring\""
+          image: ${{ matrix.config.metal-image }}
+          timeout-minutes: "180"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              ${{ matrix.config.metal-image }} \
+                -s models/tt_dit/tests/models/wan2_2/test_transformer_wan.py::test_sweep_wan_seqs -k "blackhole-16k-ring" --timeout=0 --tb=long -rA
+
+      - name: wan_24k subtest  # SYS-4633, 24k ring; Galaxy 4x8
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'wan_24k') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: wan_24k
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "models/tt_dit/tests/models/wan2_2/test_transformer_wan.py::test_sweep_wan_seqs -k \"blackhole-24k-ring\""
+          image: ${{ matrix.config.metal-image }}
+          timeout-minutes: "180"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              ${{ matrix.config.metal-image }} \
+                -s models/tt_dit/tests/models/wan2_2/test_transformer_wan.py::test_sweep_wan_seqs -k "blackhole-24k-ring" --timeout=0 --tb=long -rA
 
       - name: Cleanup
         if: ${{ always() }}
