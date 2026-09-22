@@ -62,8 +62,10 @@ on:
         type: string
         default: auto
 
+# One group per run: requested runs must never wait behind an earlier one (a job stuck waiting for a
+# runner would otherwise block every later request on the PR). Runners serialise jobs themselves.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.run_id }}
   cancel-in-progress: false
 
 jobs:
