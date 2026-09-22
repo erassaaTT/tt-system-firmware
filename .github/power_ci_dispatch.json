@@ -5,7 +5,6 @@
   "iterations": "100",
   "idle_seconds": "30",
   "system_power": "auto",
-  "bmc_ip": "",
   "tag": "",
   "requested_at": "",
   "requested_by": ""

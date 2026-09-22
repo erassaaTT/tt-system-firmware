@@ -14,14 +14,10 @@ name: Workload Telemetry
 #
 # Each board is one job; subtests run sequentially inside it, each wrapped in its own
 # telemetry capture by the power-telemetry-subtest action: pyluwen chip telemetry on
-# every board, plus system power where ci_boards.json asks for it (Galaxy):
-#   "system-power": "ipmi"          in-band ipmitool through /dev/ipmi0, no credentials
-#   "system-power": "ipmi,redfish"  additionally the BMC over HTTPS; the address comes from the
-#                                   bmc_ip dispatch input (the dashboard passes it from its Systems
-#                                   page) or "bmc-ip" on the board entry; the login is the repository
-#                                   secret POWER_CI_BMC_PASSWORD (variable POWER_CI_BMC_USER, default root).
-# Nothing else is needed on the runner: all collectors live in scripts/ (standard
-# library) and run from the venv or a throwaway container.
+# every board, plus in-band IPMI system power (Power_PSU/UBB/MB/CPU/Memory/FAN/Total)
+# where ci_boards.json sets "system-power": "ipmi" (Galaxy). The runners sit on an
+# isolated VLAN with no route to the BMCs, so there is no Redfish collector; nothing
+# else is needed on the runner: both collectors live in scripts/ (standard library).
 # A GitHub job is limited to 6 hours, so long model sessions (Galaxy) must be split
 # into several jobs; keep each subtest well under that.
 
@@ -57,16 +53,10 @@ on:
         default: ""
       system_power:
         description: >-
-          System power collectors for this run: "auto" (per board from ci_boards.json), "none", "ipmi",
-          "redfish" or "ipmi,redfish". PCIe boards have no BMC; asking for ipmi/redfish there only warns.
+          System power collector for this run: "auto" (per board from ci_boards.json), "none" or "ipmi"
+          (in-band, Galaxy only; PCIe boards have no BMC and asking for ipmi there only warns).
         type: string
         default: auto
-      bmc_ip:
-        description: >-
-          BMC address for the Galaxy job's redfish collector (the Power CI Dashboard passes it from its
-          Systems page). Overrides "bmc-ip" in ci_boards.json; empty = use ci_boards.json or skip redfish.
-        type: string
-        default: ""
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
@@ -83,7 +73,6 @@ jobs:
       iterations: ${{ steps.params.outputs.iterations }}
       idle_seconds: ${{ steps.params.outputs.idle_seconds }}
       system_power: ${{ steps.params.outputs.system_power }}
-      bmc_ip: ${{ steps.params.outputs.bmc_ip }}
       tag: ${{ steps.params.outputs.tag }}
     steps:
       - uses: actions/checkout@v4
@@ -97,7 +86,6 @@ jobs:
           IN_ITERATIONS: ${{ inputs.iterations }}
           IN_IDLE: ${{ inputs.idle_seconds }}
           IN_SYSTEM_POWER: ${{ inputs.system_power }}
-          IN_BMC_IP: ${{ inputs.bmc_ip }}
           IN_TAG: ${{ inputs.tag }}
         run: |
           # Parameters come from the workflow_dispatch inputs, or (PR events) from
@@ -112,12 +100,11 @@ jobs:
             echo "iterations=$(get IN_ITERATIONS 100)"    >> $GITHUB_OUTPUT
             echo "idle_seconds=$(get IN_IDLE 30)"         >> $GITHUB_OUTPUT
             echo "system_power=$(get IN_SYSTEM_POWER auto)" >> $GITHUB_OUTPUT
-            echo "bmc_ip=$(get IN_BMC_IP '')"             >> $GITHUB_OUTPUT
             echo "tag=$(get IN_TAG '')"                   >> $GITHUB_OUTPUT
           else
             if git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -qx "$FILE"; then RUN=true; else RUN=false; fi
             echo "PR push; $FILE changed in the pushed commit: $RUN"
-            for k in boards workloads iterations idle_seconds system_power bmc_ip tag; do
+            for k in boards workloads iterations idle_seconds system_power tag; do
               echo "$k=$(jq -r --arg k "$k" '.[$k] // ""' "$FILE")" >> $GITHUB_OUTPUT
             done
           fi
@@ -162,7 +149,6 @@ jobs:
       POWER_CI_ITERATIONS: ${{ needs.gen-config.outputs.iterations || '100' }}
       POWER_CI_IDLE_SECONDS: ${{ needs.gen-config.outputs.idle_seconds || '30' }}
       POWER_CI_SYSTEM_POWER: ${{ needs.gen-config.outputs.system_power || 'auto' }}
-      POWER_CI_BMC_IP: ${{ needs.gen-config.outputs.bmc_ip || '' }}
       POWER_CI_TAG: ${{ needs.gen-config.outputs.tag || '' }}
     steps:
       - name: Clean workspace
@@ -239,9 +225,6 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
-          bmc-ip: ${{ env.POWER_CI_BMC_IP || matrix.config.bmc-ip || '' }}
-          bmc-user: ${{ vars.POWER_CI_BMC_USER || 'root' }}
-          bmc-password: ${{ secrets.POWER_CI_BMC_PASSWORD }}
           timeout-minutes: "65"
           run: |
             docker run \
@@ -265,9 +248,6 @@ jobs:
           venv-dir: ${{ env.VENV_DIR }}
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
-          bmc-ip: ${{ env.POWER_CI_BMC_IP || matrix.config.bmc-ip || '' }}
-          bmc-user: ${{ vars.POWER_CI_BMC_USER || 'root' }}
-          bmc-password: ${{ secrets.POWER_CI_BMC_PASSWORD }}
           timeout-minutes: "65"
           run: |
             docker run \
