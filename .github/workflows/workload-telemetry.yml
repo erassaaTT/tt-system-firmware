@@ -39,7 +39,8 @@ on:
         description: >-
           Comma-separated subtest names to run, or "all": resnet_conv, ff1_matmul_with_gelu, lm_head,
           ff1_matmul_no_gelu, bursty1, bursty2, bursty3, bursty4, bursty5, minimal_matmul, sdpa_op, binary_mul,
-          mm_after_non_mm, mla_sdpa, deepseek_v3_mla_matmul, deepseek_v3_gate_matmul (Galaxy mesh only).
+          mm_after_non_mm, mla_sdpa, deepseek_v3_mla_matmul, deepseek_v3_gate_matmul (Galaxy mesh only). "validate" only collects every selector
+          inside the container (no hardware run).
         type: string
         default: all
       iterations:
@@ -239,6 +240,40 @@ jobs:
             echo "}"
           } > "$ENV_DIR/host.json"
           cat "$ENV_DIR/host.json"
+
+      # `workloads = validate`: no hardware run. Collects every subtest's pytest selector inside the
+      # container of this board and fails if one collects nothing (renamed test, wrong -k id, image
+      # without the test). Cheap check that the image and the workload list still match.
+      - name: validate subtests (collect-only)
+        if: ${{ env.POWER_CI_WORKLOADS == 'validate' }}
+        run: |
+          set -uo pipefail
+          rc=0
+          while IFS='|' read -r name selector; do
+            [ -z "$name" ] && continue
+            out=$(docker run --rm --entrypoint bash ${{ matrix.config.metal-image }} -c \
+              "cd /tt-metal 2>/dev/null || cd \$TT_METAL_HOME 2>/dev/null || true; pytest --collect-only -q $selector 2>&1 | tail -3")
+            n=$(echo "$out" | grep -oE '^[0-9]+ tests? collected|[0-9]+/[0-9]+ tests? collected' | grep -oE '^[0-9]+' | head -1)
+            if [ -n "$n" ] && [ "$n" -gt 0 ]; then echo "OK   $name: $n test(s) collected"; else echo "::error::$name collects nothing: $out"; rc=1; fi
+          done <<'SELECTORS'
+            resnet_conv|tests/didt/test_resnet_conv.py::test_resnet_conv -k "all"
+            ff1_matmul_with_gelu|tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "with_gelu and all"
+            lm_head|tests/didt/test_lm_head_matmul.py::test_lm_head_matmul -k "all"
+            ff1_matmul_no_gelu|tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "all and not with_gelu"
+            bursty1|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-1"
+            bursty2|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-2"
+            bursty3|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-3"
+            bursty4|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-4"
+            bursty5|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-5"
+            minimal_matmul|tests/didt/test_minimal_matmul.py::test_minimal_matmul -k "all and bf16_HiFi2"
+            sdpa_op|tests/didt/test_sdpa_op.py::test_sdpa_op -k "all and bf16_HiFi2"
+            binary_mul|tests/didt/test_binary_mul.py::test_binary_mul -k "all and with_gelu"
+            mm_after_non_mm|tests/didt/test_mm_after_non_mm.py::test_ff1_matmul -k "all and with_gelu and loop0"
+            mla_sdpa|tests/didt/test_mla_sdpa.py::test_mla_sdpa -k "all"
+            deepseek_v3_mla_matmul|tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul
+            deepseek_v3_gate_matmul|tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul
+          SELECTORS
+          exit $rc
 
       # ------------------------------------------------------------------------
       # Subtests run sequentially, each wrapped in its own telemetry capture by the
