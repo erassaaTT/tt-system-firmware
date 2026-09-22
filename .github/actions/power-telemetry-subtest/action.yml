@@ -242,4 +242,5 @@ runs:
           telemetry_output/${{ inputs.name }}/*.csv
           telemetry_output/${{ inputs.name }}/*.json
           telemetry_output/${{ inputs.name }}/*.log
+          telemetry_output/${{ inputs.name }}/*.txt
           telemetry_output/${{ inputs.name }}/command.sh
