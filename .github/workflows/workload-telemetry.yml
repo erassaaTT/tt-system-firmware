@@ -201,6 +201,10 @@ jobs:
             || "$VENV_DIR/bin/pip" install "git+https://github.com/tenstorrent/tt-smi" \
             || echo "::warning::tt-smi not installed; no version snapshot"
 
+      - name: Pre-pull the IPMI poller image
+        if: ${{ matrix.config.system-power == 'ipmi' }}
+        run: docker pull -q ubuntu:24.04 || true
+
       - name: Record environment (tt-smi snapshot, host info)
         # One snapshot per board job: firmware bundle, component firmware, KMD, tt-smi
         # version, board serials. Uploaded with every subtest so each artifact is self-contained.

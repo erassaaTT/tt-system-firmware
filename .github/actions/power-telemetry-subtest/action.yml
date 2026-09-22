@@ -58,6 +58,21 @@ runs:
         TELEM_DIR="${GITHUB_WORKSPACE}/telemetry_output/${{ inputs.name }}"
         mkdir -p "$TELEM_DIR"
         cd "$TELEM_DIR"
+        # System power (Galaxy): in-band IPMI needs root and /dev/ipmi0; the runner user has
+        # neither, so poll from a throwaway container. Same CSV layout as the team's IPMI logs.
+        case ",${{ inputs.system-power }}," in *,ipmi,*)
+          if [ -e /dev/ipmi0 ]; then
+            docker run -d --rm --name "powerci-ipmi-${{ inputs.name }}" --user root \
+              --device /dev/ipmi0 -v "$GITHUB_WORKSPACE:/w" -w "/w/telemetry_output/${{ inputs.name }}" \
+              ${{ inputs.ipmi-image }} bash -c \
+              'command -v ipmitool >/dev/null || (apt-get update -qq && apt-get install -y -qq ipmitool python3 >/dev/null); exec python3 /w/scripts/poll_ipmi_power.py --out ipmi_power.csv --interval 2' \
+              > ipmi_container.log 2>&1 || echo "::warning::could not start the IPMI poller container"
+            # wait (bounded) for the first IPMI row so system power covers the whole capture
+            for _ in $(seq 1 45); do [ -s ipmi_power.csv ] && [ "$(wc -l < ipmi_power.csv)" -ge 2 ] && break; sleep 1; done
+          else
+            echo "::warning::system-power=ipmi requested but /dev/ipmi0 is not present on this runner"
+          fi ;;
+        esac
         # The runner user already has access to /dev/tenstorrent (same access other
         # workflows use via pyluwen), so no sudo is required.
         nohup "${{ inputs.venv-dir }}/bin/python3" \
@@ -78,19 +93,6 @@ runs:
         fi
         echo "Started telemetry collection for '${{ inputs.name }}' (PID $TELEM_PID)"
 
-        # System power (Galaxy): in-band IPMI needs root and /dev/ipmi0; the runner user has
-        # neither, so poll from a throwaway container. Same CSV layout as the team's IPMI logs.
-        case ",${{ inputs.system-power }}," in *,ipmi,*)
-          if [ -e /dev/ipmi0 ]; then
-            docker run -d --rm --name "powerci-ipmi-${{ inputs.name }}" --user root \
-              --device /dev/ipmi0 -v "$GITHUB_WORKSPACE:/w" -w "/w/telemetry_output/${{ inputs.name }}" \
-              ${{ inputs.ipmi-image }} bash -c \
-              'command -v ipmitool >/dev/null || (apt-get update -qq && apt-get install -y -qq ipmitool python3 >/dev/null); exec python3 /w/scripts/poll_ipmi_power.py --out ipmi_power.csv --interval 2' \
-              > ipmi_container.log 2>&1 || echo "::warning::could not start the IPMI poller container"
-          else
-            echo "::warning::system-power=ipmi requested but /dev/ipmi0 is not present on this runner"
-          fi ;;
-        esac
         # Idle window: chips at rest under telemetry, so every artifact carries its own
         # idle reference right before the workload.
         IDLE="${{ inputs.idle-seconds }}"
