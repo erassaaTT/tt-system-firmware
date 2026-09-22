@@ -80,6 +80,7 @@ jobs:
       idle_seconds: ${{ steps.params.outputs.idle_seconds }}
       system_power: ${{ steps.params.outputs.system_power }}
       tag: ${{ steps.params.outputs.tag }}
+      requested_by: ${{ steps.params.outputs.requested_by }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -114,6 +115,7 @@ jobs:
             echo "idle_seconds=$(get IN_IDLE 30)"         >> $GITHUB_OUTPUT
             echo "system_power=$(get IN_SYSTEM_POWER auto)" >> $GITHUB_OUTPUT
             echo "tag=$(get IN_TAG '')"                   >> $GITHUB_OUTPUT
+            echo "requested_by=${{ github.actor }}"       >> $GITHUB_OUTPUT
           else
             if [ "$PR_ACTION" = "synchronize" ] && [ -n "$EVENT_AFTER" ]; then
               git fetch -q --depth=50 origin "refs/pull/$PR_NUMBER/head"
@@ -127,7 +129,7 @@ jobs:
             else
               echo "PR event '$PR_ACTION' is not a run request"
             fi
-            for k in boards workloads iterations idle_seconds system_power tag; do
+            for k in boards workloads iterations idle_seconds system_power tag requested_by; do
               echo "$k=$(jq -r --arg k "$k" '.[$k] // ""' "$FILE")" >> $GITHUB_OUTPUT
             done
           fi
@@ -173,6 +175,7 @@ jobs:
       POWER_CI_IDLE_SECONDS: ${{ needs.gen-config.outputs.idle_seconds || '30' }}
       POWER_CI_SYSTEM_POWER: ${{ needs.gen-config.outputs.system_power || 'auto' }}
       POWER_CI_TAG: ${{ needs.gen-config.outputs.tag || '' }}
+      POWER_CI_REQUESTED_BY: ${{ needs.gen-config.outputs.requested_by || github.actor }}
     steps:
       - name: Clean workspace
         # These self-hosted runners are shared with container-based jobs (hardware-smoke,
@@ -254,6 +257,7 @@ jobs:
             "fw_repo": "${{ github.repository }}", "fw_repo_sha": "${{ github.sha }}", "fw_repo_ref": "${{ github.ref_name }}",
             "run_id": "${{ github.run_id }}", "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
             "event": "${{ github.event_name }}", "pr_number": "${{ github.event.pull_request.number }}", "tag": "$POWER_CI_TAG",
+            "requested_by": "$POWER_CI_REQUESTED_BY",
           }, open(sys.argv[1], "w"), indent=2)
           PY
           cat "$ENV_DIR/host.json"
