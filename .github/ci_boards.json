@@ -62,7 +62,7 @@
       "arch-name": "blackhole",
       "metal-options": "--cap-add SYS_MODULE --device /dev/tenstorrent --device /dev/ipmi0 --user=root",
       "kmd_build": "2.11.0",
-      "power-ci-label": "bh-galaxy-power-CI",
+      "power-ci-label": "bh-galaxy-revc",
       "system-power": "ipmi"
     }
   ]
