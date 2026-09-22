@@ -246,11 +246,12 @@ jobs:
             printf '%s\n' "$IPMI_OUT" > "$ENV_DIR/ipmi-inventory.txt"   # raw mc info / sdr elist / CPLD reads, kept read-only
             CPLD_JSON="$(printf '%s\n' "$IPMI_OUT" | awk 'f && /^[A-Z0-9]+:/ {split($0,a,":"); v=a[2]; gsub(/^ +| +$/,"",v); n=split(v,b," "); if (n==4) s=s (c++?",":"") "\"" a[1] "\":\"V" substr(b[3],2,1) "." b[2] "." b[1] " (" b[4] ")\""} /===CPLD===/ {f=1} END {if (c) print "{" s "}"}')"
             # BMC version per SysEng convention: minor of "Firmware Revision" . decimal of the first "Aux Firmware Rev Info" byte (0.05 + 0x13 -> 5.19)
-            # "Aux Firmware Rev Info" puts its bytes on the following line ("    0x13 0x00 ..."); the first byte in
-            # decimal is the build number (0.05 + 0x13 -> 5.19). mawk has no strtonum, so the hex is converted in bash.
-            FW_MINOR="$(printf '%s\n' "$IPMI_OUT" | awk -F: '/Firmware Revision/ {split($2,a,"."); print a[2]+0; exit}')"
+            # BMC version as the team reads it (Confluence "Updating BMC (CLI)", tt-ansible tt_bmc_fw_upgrade): major = minor
+            # digit of "Firmware Revision" (0.05 -> 5), minor = the first "Aux Firmware Rev Info" byte, printed on the next
+            # line, taken as literal digits (0x19 -> 19, NOT hex-decoded to 25). 0.05 + 0x19 -> 5.19.
+            FW_MAJOR="$(printf '%s\n' "$IPMI_OUT" | awk -F: '/Firmware Revision/ {split($2,a,"."); print a[2]+0; exit}')"
             AUX_HEX="$(printf '%s\n' "$IPMI_OUT" | awk '/Aux Firmware Rev Info/ {getline; print $1; exit}' | tr -d '[:space:]')"
-            case "$AUX_HEX" in 0x*|0X*) [ -n "$FW_MINOR" ] && BMC_VERSION="${FW_MINOR}.$(printf '%d' "$AUX_HEX" 2>/dev/null || echo "$AUX_HEX")" ;; esac
+            case "$AUX_HEX" in 0x*|0X*) [ -n "$FW_MAJOR" ] && BMC_VERSION="${FW_MAJOR}.${AUX_HEX#0[xX]}" ;; esac
             INLET_C="$(printf '%s\n' "$IPMI_OUT" | awk -F'|' '/TEMP_INLET/ {gsub(/ degrees C/,"",$5); gsub(/ /,"",$5); print $5; exit}')"
             FAN_RPMS="$(printf '%s\n' "$IPMI_OUT" | awk -F'|' '/RPM/ {gsub(/ RPM/,"",$5); gsub(/ /,"",$5); if ($5 ~ /^[0-9]+$/) printf "%s%s", (n++?",":""), $5}')"
           fi
