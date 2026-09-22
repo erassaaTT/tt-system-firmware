@@ -68,7 +68,10 @@ runs:
       run: |
         set +e -uo pipefail
         if [ -z "${{ inputs.selector }}" ] || [ -z "${{ inputs.image }}" ]; then echo "available=true" >> $GITHUB_OUTPUT; exit 0; fi
-        OUT=$(docker run --rm --entrypoint bash ${{ inputs.image }} -c "cd /home/user/tt-metal 2>/dev/null || cd \$TT_METAL_HOME 2>/dev/null || true; pytest --collect-only -q ${{ inputs.selector }} 2>&1 | tail -2" || true)
+        # Same entrypoint and working directory as the real subtest (the image's defaults); devices mounted because
+        # tt-metal's conftest may touch them while collecting.
+        OUT=$(docker run --rm --entrypoint pytest --device /dev/tenstorrent -v /dev/hugepages-1G:/dev/hugepages-1G ${{ inputs.image }} \
+              --collect-only -q ${{ inputs.selector }} 2>&1 | tail -6 || true)
         N=$(echo "$OUT" | grep -oE '[0-9]+ tests? collected|[0-9]+/[0-9]+ tests? collected' | grep -oE '^[0-9]+' | head -1 || true)
         echo "collect-only output: $OUT"
         if [ -n "$N" ] && [ "$N" -gt 0 ]; then
