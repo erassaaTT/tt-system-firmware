@@ -235,10 +235,15 @@ jobs:
             'd=/home/user/tt-metal; [ -d $d/.git ] || d=$TT_METAL_HOME; c=$(git -C $d rev-parse HEAD 2>/dev/null); v=$(python3 -c "from importlib.metadata import version; print(version(\"ttnn\"))" 2>/dev/null); echo "$c $v"' 2>/dev/null || true)"
           TT_METAL_COMMIT="${METAL_INFO%% *}"; TT_METAL_VERSION="${METAL_INFO#* }"
           # Galaxy: BMC version, inlet temperature and fan RPMs in-band over IPMI (root inside a throwaway container)
-          BMC_VERSION=""; INLET_C=""; FAN_RPMS=""
+          BMC_VERSION=""; INLET_C=""; FAN_RPMS=""; CPLD_JSON=""
           if [ "${{ matrix.config.system-power || 'none' }}" = "ipmi" ] && [ -e /dev/ipmi0 ]; then
+            # CPLD versions of MB / PDB / UBB1-4 (S7T register 0x04 via IPMI master write-read; same read the
+            # Quanta diagnostics script does in-band). 4 bytes " 00 15 02 a4" -> V2.15.00 (a4).
             IPMI_OUT="$(docker run --rm --user root --device /dev/ipmi0 ubuntu:24.04 bash -c \
-              'apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq ipmitool >/dev/null 2>&1; ipmitool mc info; echo ===SDR===; ipmitool sdr elist' 2>/dev/null || true)"
+              'apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq ipmitool >/dev/null 2>&1; ipmitool mc info; echo ===SDR===; ipmitool sdr elist; echo ===CPLD===;
+               for e in "MB 0x17 0x62" "PDB 0x09 0x62" "UBB1 0x0D 0x80" "UBB2 0x0F 0x80" "UBB3 0x11 0x80" "UBB4 0x13 0x80"; do set -- $e; echo "$1:$(ipmitool raw 0x06 0x52 $2 $3 0x04 0x00 2>/dev/null)"; done' 2>/dev/null || true)"
+            CPLD_JSON="$(printf '%s\n' "$IPMI_OUT" | awk 'f && /^[A-Z0-9]+:/ {split($0,a,":"); v=a[2]; gsub(/^ +| +$/,"",v); n=split(v,b," "); if (n==4) printf "%s\"%s\":\"V%s.%s.%s (%s)\"", (c++?",":""), a[1], substr(b[3],2,1), b[2], b[1], b[4]} /===CPLD===/ {f=1} END {print "{" (c?"":"") "}" }' | sed 's/^{}$//' )"
+            [ -n "$CPLD_JSON" ] && CPLD_JSON="{${CPLD_JSON#\{}"
             # BMC version per SysEng convention: minor of "Firmware Revision" . decimal of the first "Aux Firmware Rev Info" byte (0.05 + 0x13 -> 5.19)
             BMC_VERSION="$(printf '%s\n' "$IPMI_OUT" | awk -F: '/Firmware Revision/ {split($2,a,"."); minor=a[2]+0} /Aux Firmware Rev Info/ {aux=$2} END {gsub(/[[:space:]]/,"",aux); if (minor!="" && aux!="") printf "%d.%d", minor, strtonum("0x" substr(aux,3,2))}' 2>/dev/null || true)"
             INLET_C="$(printf '%s\n' "$IPMI_OUT" | awk -F'|' '/TEMP_INLET/ {gsub(/ degrees C/,"",$5); gsub(/ /,"",$5); print $5; exit}')"
@@ -254,6 +259,7 @@ jobs:
             "tt_flash_version": "$TT_FLASH_VERSION" or None, "tt_metal_commit": "$TT_METAL_COMMIT" or None, "tt_metal_version": "$TT_METAL_VERSION" or None,
             "bmc_version": "$BMC_VERSION" or None, "inlet_temp_c": float("$INLET_C") if "$INLET_C" else None,
             "fan_rpm": fans or None, "fan_rpm_mean": (sum(fans) / len(fans)) if fans else None,
+            "cpld_versions": (json.loads('''$CPLD_JSON''') if '''$CPLD_JSON'''.strip().startswith("{") and len('''$CPLD_JSON'''.strip()) > 2 else None),
             "fw_repo": "${{ github.repository }}", "fw_repo_sha": "${{ github.sha }}", "fw_repo_ref": "${{ github.ref_name }}",
             "run_id": "${{ github.run_id }}", "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
             "event": "${{ github.event_name }}", "pr_number": "${{ github.event.pull_request.number }}", "tag": "$POWER_CI_TAG",
