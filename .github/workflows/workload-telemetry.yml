@@ -200,6 +200,7 @@ jobs:
           "$VENV_DIR/bin/pip" install tt-smi \
             || "$VENV_DIR/bin/pip" install "git+https://github.com/tenstorrent/tt-smi" \
             || echo "::warning::tt-smi not installed; no version snapshot"
+          "$VENV_DIR/bin/pip" install tt-flash || echo "::warning::tt-flash not installed; version not recorded"
 
       - name: Pre-pull the IPMI poller image
         if: ${{ matrix.config.system-power == 'ipmi' }}
@@ -225,24 +226,36 @@ jobs:
             rm -f "$ENV_DIR/tt-smi.err"
             [ -s "$ENV_DIR/tt-smi.json" ] && echo "tt-smi snapshot: $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("host_info",{}).get("Driver"), d.get("host_sw_vers",{}).get("tt_smi"))' "$ENV_DIR/tt-smi.json")"
           fi
-          {
-            echo "{"
-            echo "  \"host\": \"$(hostname)\","
-            echo "  \"board\": \"${{ matrix.config.board }}\","
-            echo "  \"runner\": \"${{ runner.name }}\","
-            echo "  \"kmd_version\": \"$(cat /sys/module/tenstorrent/version 2>/dev/null || echo unknown)\","
-            echo "  \"kernel\": \"$(uname -r)\","
-            echo "  \"container_image\": \"${{ matrix.config.metal-image }}\","
-            echo "  \"fw_repo\": \"${{ github.repository }}\","
-            echo "  \"fw_repo_sha\": \"${{ github.sha }}\","
-            echo "  \"fw_repo_ref\": \"${{ github.ref_name }}\","
-            echo "  \"run_id\": \"${{ github.run_id }}\","
-            echo "  \"run_url\": \"${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\","
-            echo "  \"event\": \"${{ github.event_name }}\","
-            echo "  \"pr_number\": \"${{ github.event.pull_request.number }}\","
-            echo "  \"tag\": \"$POWER_CI_TAG\""
-            echo "}"
-          } > "$ENV_DIR/host.json"
+          TT_FLASH_VERSION="$("$VENV_DIR/bin/tt-flash" --version 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)+' | head -1 || true)"
+          # tt-metal commit and version from inside the test container (the image is a checkout at a fixed sha)
+          METAL_INFO="$(docker run --rm --entrypoint bash ${{ matrix.config.metal-image }} -c \
+            'd=/home/user/tt-metal; [ -d $d/.git ] || d=$TT_METAL_HOME; c=$(git -C $d rev-parse HEAD 2>/dev/null); v=$(python3 -c "from importlib.metadata import version; print(version(\"ttnn\"))" 2>/dev/null); echo "$c $v"' 2>/dev/null || true)"
+          TT_METAL_COMMIT="${METAL_INFO%% *}"; TT_METAL_VERSION="${METAL_INFO#* }"
+          # Galaxy: BMC version, inlet temperature and fan RPMs in-band over IPMI (root inside a throwaway container)
+          BMC_VERSION=""; INLET_C=""; FAN_RPMS=""
+          if [ "${{ matrix.config.system-power || 'none' }}" = "ipmi" ] && [ -e /dev/ipmi0 ]; then
+            IPMI_OUT="$(docker run --rm --user root --device /dev/ipmi0 ubuntu:24.04 bash -c \
+              'apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq ipmitool >/dev/null 2>&1; ipmitool mc info; echo ===SDR===; ipmitool sdr elist' 2>/dev/null || true)"
+            # BMC version per SysEng convention: minor of "Firmware Revision" . decimal of the first "Aux Firmware Rev Info" byte (0.05 + 0x13 -> 5.19)
+            BMC_VERSION="$(printf '%s\n' "$IPMI_OUT" | awk -F: '/Firmware Revision/ {split($2,a,"."); minor=a[2]+0} /Aux Firmware Rev Info/ {aux=$2} END {gsub(/[[:space:]]/,"",aux); if (minor!="" && aux!="") printf "%d.%d", minor, strtonum("0x" substr(aux,3,2))}' 2>/dev/null || true)"
+            INLET_C="$(printf '%s\n' "$IPMI_OUT" | awk -F'|' '/TEMP_INLET/ {gsub(/ degrees C/,"",$5); gsub(/ /,"",$5); print $5; exit}')"
+            FAN_RPMS="$(printf '%s\n' "$IPMI_OUT" | awk -F'|' '/RPM/ {gsub(/ RPM/,"",$5); gsub(/ /,"",$5); if ($5 ~ /^[0-9]+$/) printf "%s%s", (n++?",":""), $5}')"
+          fi
+          python3 - "$ENV_DIR/host.json" <<PY
+          import json, os, sys
+          fans = [int(x) for x in "$FAN_RPMS".split(",") if x.strip().isdigit()]
+          json.dump({
+            "host": os.uname().nodename, "board": "${{ matrix.config.board }}", "runner": "${{ runner.name }}",
+            "kmd_version": open("/sys/module/tenstorrent/version").read().strip() if os.path.exists("/sys/module/tenstorrent/version") else "unknown",
+            "kernel": os.uname().release, "container_image": "${{ matrix.config.metal-image }}",
+            "tt_flash_version": "$TT_FLASH_VERSION" or None, "tt_metal_commit": "$TT_METAL_COMMIT" or None, "tt_metal_version": "$TT_METAL_VERSION" or None,
+            "bmc_version": "$BMC_VERSION" or None, "inlet_temp_c": float("$INLET_C") if "$INLET_C" else None,
+            "fan_rpm": fans or None, "fan_rpm_mean": (sum(fans) / len(fans)) if fans else None,
+            "fw_repo": "${{ github.repository }}", "fw_repo_sha": "${{ github.sha }}", "fw_repo_ref": "${{ github.ref_name }}",
+            "run_id": "${{ github.run_id }}", "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+            "event": "${{ github.event_name }}", "pr_number": "${{ github.event.pull_request.number }}", "tag": "$POWER_CI_TAG",
+          }, open(sys.argv[1], "w"), indent=2)
+          PY
           cat "$ENV_DIR/host.json"
 
       # `workloads = validate`: no hardware run. Collects every subtest's pytest selector inside the
