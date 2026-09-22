@@ -197,6 +197,7 @@ runs:
 
         # Environment snapshot from the job (tt-smi.json, host.json) travels with every subtest.
         cp "${GITHUB_WORKSPACE}"/telemetry_output/env/*.json "$TELEM_DIR"/ 2>/dev/null || true
+        cp "${GITHUB_WORKSPACE}"/telemetry_output/env/*.txt "$TELEM_DIR"/ 2>/dev/null || true
 
         RC="$(cat "$TELEM_DIR/workload_exit_code" 2>/dev/null || echo 124)"
         STATUS="failed"; [ "$RC" = "0" ] && STATUS="passed"
