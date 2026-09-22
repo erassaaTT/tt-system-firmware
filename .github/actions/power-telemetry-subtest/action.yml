@@ -33,6 +33,10 @@ inputs:
     description: Seconds of idle telemetry to capture before the workload starts (0 to skip).
     required: false
     default: "30"
+  cooldown-seconds:
+    description: Seconds to keep collecting after the workload exits, so the ramp-down back to idle is in the capture (0 to skip).
+    required: false
+    default: "20"
   system-power:
     description: >-
       System power collector: "none" or "ipmi" (in-band `ipmitool sdr list` through /dev/ipmi0,
@@ -163,6 +167,11 @@ runs:
       run: |
         set -uxo pipefail
         TELEM_DIR="${GITHUB_WORKSPACE}/telemetry_output/${{ inputs.name }}"
+        # Keep collecting for the cooldown so the drop back to idle power/clock/temperature is in the data.
+        COOL="${{ inputs.cooldown-seconds }}"
+        if [ "${COOL:-0}" -gt 0 ] 2>/dev/null && [ -f "$TELEM_DIR/workload_ended_at" ]; then
+          echo "cooldown: collecting ${COOL}s more after the workload"; sleep "$COOL"
+        fi
         PID=""
         if [ -f "$TELEM_DIR/telemetry.pid" ]; then
           PID="$(cat "$TELEM_DIR/telemetry.pid")"
@@ -212,6 +221,7 @@ runs:
           "status": "$STATUS",
           "exit_code": $RC,
           "idle_seconds": ${{ inputs.idle-seconds }},
+          "cooldown_seconds": ${{ inputs.cooldown-seconds }},
           "system_power": "${{ inputs.system-power }}",
           "telemetry_started_at": "$(cat "$TELEM_DIR/telemetry_started_at" 2>/dev/null)",
           "workload_started_at": "$(cat "$TELEM_DIR/workload_started_at" 2>/dev/null)",

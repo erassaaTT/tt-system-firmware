@@ -3,7 +3,7 @@
 """Poll Galaxy system power in-band over IPMI and write a CSV.
 
 Reads the BMC's Power_* sensors (Power_PSU0..3, Power_UBB0..3, Power_MB_HSC,
-Power_CPU, Power_Memory, Power_FAN, Power_Total) with `ipmitool sdr list`
+Power_CPU, Power_Memory, Power_FAN, Power_Total) with `ipmitool sdr list` once, then `ipmitool sensor reading` on just those names
 through /dev/ipmi0, so it needs no BMC address or password; it needs root (or
 the ipmi group), which in CI it gets by running inside a container with
 `--device /dev/ipmi0 --user root`. Stops cleanly on SIGINT/SIGTERM.
@@ -31,14 +31,7 @@ def _stop(signum, frame):  # noqa: ARG001
     STOP = True
 
 
-def read_power(prefix: str, timeout: float) -> dict:
-    try:
-        out = subprocess.run(
-            ["ipmitool", "sdr", "list"], capture_output=True, text=True, timeout=timeout, check=False
-        ).stdout
-    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
-        print(f"ipmitool failed: {exc}", file=sys.stderr, flush=True)
-        return {}
+def _parse_rows(out: str, prefix: str) -> dict:
     values = {}
     for line in out.splitlines():
         parts = [p.strip() for p in line.split("|")]
@@ -53,10 +46,29 @@ def read_power(prefix: str, timeout: float) -> dict:
     return values
 
 
+def _run(args: list[str], timeout: float) -> str:
+    try:
+        return subprocess.run(args, capture_output=True, text=True, timeout=timeout, check=False).stdout
+    except (subprocess.TimeoutExpired, FileNotFoundError) as exc:
+        print(f"ipmitool failed: {exc}", file=sys.stderr, flush=True)
+        return ""
+
+
+def read_power(prefix: str, timeout: float, names: list[str] | None = None) -> dict:
+    """`ipmitool sdr list` walks every sensor on the BMC (~10 s on a Galaxy). Once the Power_* names are
+    known, `ipmitool sensor reading <names>` asks for just those (~1-2 s), so peaks are not smeared."""
+    if names:
+        values = _parse_rows(_run(["ipmitool", "sensor", "reading", *names], timeout), prefix)
+        if len(values) >= max(1, len(names) // 2):
+            return values
+        print("sensor reading returned too few values; falling back to sdr list", file=sys.stderr, flush=True)
+    return _parse_rows(_run(["ipmitool", "sdr", "list"], timeout), prefix)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Poll IPMI Power_* sensors to CSV")
     ap.add_argument("--out", default="ipmi_power.csv")
-    ap.add_argument("--interval", type=float, default=2.0, help="seconds between polls (a poll itself takes several seconds on Galaxy)")
+    ap.add_argument("--interval", type=float, default=2.0, help="seconds between polls (the first poll walks the whole SDR and takes ~10 s on Galaxy; later polls read only the Power_* sensors)")
     ap.add_argument("--prefix", default="Power_", help="sensor name prefix to keep")
     ap.add_argument("--timeout", type=float, default=30.0, help="ipmitool timeout per poll")
     args = ap.parse_args()
@@ -70,7 +82,7 @@ def main() -> int:
         writer = None
         while not STOP:
             t0 = time.monotonic()
-            values = read_power(args.prefix, args.timeout)
+            values = read_power(args.prefix, args.timeout, columns or None)
             if values:
                 if writer is None:
                     columns = sorted(values)
