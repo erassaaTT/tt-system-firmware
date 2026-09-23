@@ -64,11 +64,58 @@ def extract_top_gddr(value, controller_id):
     return top
 
 
+# Telemetry tag ids (tt-system-firmware lib/tenstorrent/bh_arc/telemetry.c). AICLK_ARB_MAX = arb_max_freq | (arbiter << 16):
+# arbiter 0 fmax, 1 tdp, 2 fast_tdc, 3 tdc, 4 thm, 5 board_power, 6 voltage, 7 gddr_thm, 8 doppler_slow, 9 doppler_critical, 10 host_fmax.
+ARB_TAGS = {"AICLK_ARB_MIN": 60, "AICLK_ARB_MAX": 61, "KERNEL_THROTTLER": 70}
+
+
+class UmdArbReader:
+    """Reads the telemetry entries pyluwen's struct does not expose (AICLK arbiters, kernel throttler) through tt-umd.
+    Both tt-umd and pyluwen only read ARC memory, so they can share the devices. Disabled on the first failure."""
+
+    def __init__(self, pci_ids):
+        self.readers = {}
+        self.failed = False
+        try:
+            from tt_umd import TTDevice
+        except Exception as exc:  # tt-umd not installed
+            print(f"tt-umd not available; AICLK arbiter tags will not be recorded ({exc})", flush=True)
+            self.failed = True
+            return
+        for pci in pci_ids:
+            try:
+                dev = TTDevice.create(pci)
+                rd = dev.get_arc_telemetry_reader()
+                self.readers[pci] = (dev, rd, {n: rd.is_entry_available(t) for n, t in ARB_TAGS.items()})
+            except Exception as exc:
+                print(f"tt-umd could not open pci:{pci} for arbiter tags ({exc})", flush=True)
+        print(f"AICLK arbiter tags via tt-umd on {len(self.readers)} device(s)", flush=True)
+
+    def read(self, pci):
+        if self.failed or pci not in self.readers:
+            return {}
+        _, rd, avail = self.readers[pci]
+        out = {}
+        try:
+            for name, tag in ARB_TAGS.items():
+                if avail.get(name):
+                    out[name] = int(rd.read_entry(tag))
+        except Exception as exc:
+            print(f"tt-umd read failed on pci:{pci}; arbiter tags disabled ({exc})", flush=True)
+            self.failed = True
+            return {}
+        return out
+
+
+ARB_READER = None
+
+
 def get_telemetry(telem_dicts, workload: str = "") -> dict:
     results = []
 
-    for pci_index, map in enumerate(telem_dicts):
+    for list_index, map in enumerate(telem_dicts):
         telem = {}
+        pci_index = int(map.get("_PCI", hex(list_index)), 16)
 
         # Timestamp
         telem["TIMESTAMP"] = time.ctime()
@@ -127,6 +174,32 @@ def get_telemetry(telem_dicts, workload: str = "") -> dict:
             else -1
         )
 
+        # ---- health / status tags (all from the same pyluwen struct; 0 when the firmware does not populate them)
+        def raw(name, default=0):
+            v = map.get(name)
+            return int(v, 16) if v is not None else default
+
+        telem["THERM_TRIP_COUNT"] = raw("THERM_TRIP_COUNT") & 0xFFFF
+        telem["TIMER_HEARTBEAT"] = raw("TIMER_HEARTBEAT")
+        telem["ETH_LIVE_STATUS"] = raw("ETH_STATUS0")  # link status << 16 | heartbeat status
+        for pair in ("01", "23", "45", "67"):
+            telem[f"GDDR{pair}_CORR_ERRS"] = raw(f"GDDR{pair}_CORR_ERRS")  # bytes: rd_lo, wr_lo, rd_hi, wr_hi
+        telem["GDDR_UNCORR_ERRS"] = raw("GDDR_UNCORR_ERRS")  # bit per controller rd/wr
+        telem["VREG_TEMP"] = convert_signed_16_16_to_float(raw("VREG_TEMPERATURE")) if map.get("VREG_TEMPERATURE") else -1
+        telem["BOARD_TEMP"] = convert_signed_16_16_to_float(raw("BOARD_TEMPERATURE")) if map.get("BOARD_TEMPERATURE") else -1
+        telem["FAN_RPM"] = raw("FAN_RPM", -1)
+        telem["TDP_LIMIT_MAX"] = raw("TDP_LIMIT_MAX", -1)
+        telem["TDC_LIMIT_MAX"] = raw("TDC_LIMIT_MAX", -1)
+        telem["AICLK_LIMIT_MAX"] = raw("AICLK_LIMIT_MAX", -1)
+        telem["THM_LIMIT_THROTTLE"] = raw("THM_LIMIT_THROTTLE", -1)
+        # AICLK arbiter tags are not in the pyluwen struct; ARB_READER fills them through tt-umd when available.
+        arb = ARB_READER.read(pci_index) if ARB_READER else {}
+        telem["AICLK_ARB_MAX_ID"] = arb.get("AICLK_ARB_MAX", -1) >> 16 if arb.get("AICLK_ARB_MAX", -1) >= 0 else -1
+        telem["AICLK_ARB_MAX_MHZ"] = arb.get("AICLK_ARB_MAX", -1) & 0xFFFF if arb.get("AICLK_ARB_MAX", -1) >= 0 else -1
+        telem["AICLK_ARB_MIN_ID"] = arb.get("AICLK_ARB_MIN", -1) >> 16 if arb.get("AICLK_ARB_MIN", -1) >= 0 else -1
+        telem["AICLK_ARB_MIN_MHZ"] = arb.get("AICLK_ARB_MIN", -1) & 0xFFFF if arb.get("AICLK_ARB_MIN", -1) >= 0 else -1
+        telem["KERNEL_THROTTLER"] = arb.get("KERNEL_THROTTLER", -1)
+
         for key, value in gddr_controller_temperature_map.items():
             telem[f"GDDR{key}_TEMP_BOTTOM"] = (
                 extract_bottom_gddr(int(map[value], 16), key)
@@ -154,6 +227,9 @@ def parse_args():
     parser.add_argument(
         "--pad", action="store_true", help="Pad the output csv with -1 when read fails"
     )
+    parser.add_argument(
+        "--no-umd", action="store_true", help="Do not read AICLK arbiter / kernel-throttler tags through tt-umd"
+    )
     parser.add_argument("--vf", action="store_true", help="Run in vf sweep mode")
     parser.add_argument(
         "--workload", type=str, default="", help="Workload label stamped onto every row"
@@ -167,11 +243,15 @@ if __name__ == "__main__":
     # Detecting chips
     raw_devices = pyluwen.detect_chips_fallible()
     devices = []
+    pci_ids = []
     for i, device in enumerate(raw_devices):
         if not device.have_comms():
             print(f"Cannot communicate with device at pci:{i}")
         else:
             devices.append(device)
+            pci_ids.append(i)
+    if not args.no_umd:
+        ARB_READER = UmdArbReader(pci_ids)
 
     print("Starting telemetry collection")
     try:
@@ -190,11 +270,14 @@ if __name__ == "__main__":
                 dict_from_public_attrs(telem_struct) for telem_struct in telem_structs
             ]
             telem_dicts = []
-            for map in json_map:
-                temp_dict = {}
+            for pci, map in zip(pci_ids, json_map):
+                temp_dict = {"_PCI": hex(pci)}
                 for key, value in map.items():
-                    if value:
-                        temp_dict[key.upper()] = hex(value)
+                    if value is not None and not isinstance(value, (str, bool)):
+                        try:
+                            temp_dict[key.upper()] = hex(int(value))
+                        except (TypeError, ValueError):
+                            pass
                 telem_dicts.append(temp_dict)
             telems = get_telemetry(telem_dicts, workload=args.workload)
 
