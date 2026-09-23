@@ -85,6 +85,7 @@ class UmdArbReader:
         for pci in pci_ids:
             try:
                 dev = TTDevice.create(pci)
+                dev.init_tt_device()  # required before any reader call ("cannot be called before initializing TTDevice")
                 rd = dev.get_arc_telemetry_reader()
                 self.readers[pci] = (dev, rd, {n: rd.is_entry_available(t) for n, t in ARB_TAGS.items()})
             except Exception as exc:
@@ -177,7 +178,10 @@ def get_telemetry(telem_dicts, workload: str = "") -> dict:
         # ---- health / status tags (all from the same pyluwen struct; 0 when the firmware does not populate them)
         def raw(name, default=0):
             v = map.get(name)
-            return int(v, 16) if v is not None else default
+            if v is None:
+                return default
+            v = int(v, 16)
+            return default if v == 0xFFFFFFFF else v  # all-ones = "not available" on this board (e.g. FAN_RPM on Galaxy)
 
         telem["THERM_TRIP_COUNT"] = raw("THERM_TRIP_COUNT") & 0xFFFF
         telem["TIMER_HEARTBEAT"] = raw("TIMER_HEARTBEAT")
