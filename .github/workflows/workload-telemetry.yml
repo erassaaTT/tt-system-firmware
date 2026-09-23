@@ -476,7 +476,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
+              ${{ startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '' }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-1" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
@@ -503,7 +503,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
+              ${{ startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '' }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-2" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
@@ -530,7 +530,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
+              ${{ startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '' }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-3" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
@@ -557,7 +557,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
+              ${{ startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '' }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-4" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
@@ -584,7 +584,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
+              ${{ startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '' }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-5" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
@@ -611,7 +611,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
+              ${{ startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '' }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-6" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
