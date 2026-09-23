@@ -53,6 +53,9 @@ on:
         type: string
         default: "30"
       cooldown_seconds:
+        description: Seconds to keep collecting after each workload exits, so the ramp-down back to idle is captured.
+        type: string
+        default: "20"
       max_util_fpu:
         description: Max Util FPU utilisation % (10-90, 92 = max). Only used by the max_util subtest.
         type: string
@@ -61,9 +64,6 @@ on:
         description: Max Util DRAM utilisation % (10-90, 92, 100). Only used by the max_util subtest.
         type: string
         default: "100"
-        description: Seconds to keep collecting after each workload exits, so the ramp-down back to idle is captured.
-        type: string
-        default: "20"
       tag:
         description: Free-text tag recorded in the manifest (e.g. "weekly", "fw 19.15 qual").
         type: string
