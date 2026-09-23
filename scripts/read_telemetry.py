@@ -64,9 +64,22 @@ def extract_top_gddr(value, controller_id):
     return top
 
 
-# Telemetry tag ids (tt-system-firmware lib/tenstorrent/bh_arc/telemetry.c). AICLK_ARB_MAX = arb_max_freq | (arbiter << 16):
-# arbiter 0 fmax, 1 tdp, 2 fast_tdc, 3 tdc, 4 thm, 5 board_power, 6 voltage, 7 gddr_thm, 8 doppler_slow, 9 doppler_critical, 10 host_fmax.
-ARB_TAGS = {"AICLK_ARB_MIN": 60, "AICLK_ARB_MAX": 61, "KERNEL_THROTTLER": 70}
+# Telemetry tag ids from tt-system-firmware include/tenstorrent/telemetry_tags.h (the ids, not the table positions).
+# AICLK_ARB_MAX = arb_max_freq | (arbiter << 16); arbiter 0 fmax, 1 tdp, 2 fast_tdc, 3 tdc, 4 thm, 5 board_power,
+# 6 voltage, 7 gddr_thm, 8 doppler_slow, 9 doppler_critical, 10 host_fmax. tt_umd.TelemetryTag members are preferred when present.
+ARB_TAGS = {"AICLK_ARB_MIN": 65, "AICLK_ARB_MAX": 66, "KERNEL_THROTTLER": 75}
+
+
+def _resolve_tags():
+    try:
+        from tt_umd import TelemetryTag
+    except Exception:
+        return dict(ARB_TAGS)
+    out = {}
+    for name, fallback in ARB_TAGS.items():
+        member = getattr(TelemetryTag, name, None)
+        out[name] = member if member is not None else fallback
+    return out
 
 
 class UmdArbReader:
@@ -76,6 +89,7 @@ class UmdArbReader:
     def __init__(self, pci_ids):
         self.readers = {}
         self.failed = False
+        self.tags = _resolve_tags()
         try:
             from tt_umd import TTDevice
         except Exception as exc:  # tt-umd not installed
@@ -87,10 +101,10 @@ class UmdArbReader:
                 dev = TTDevice.create(pci)
                 dev.init_tt_device()  # required before any reader call ("cannot be called before initializing TTDevice")
                 rd = dev.get_arc_telemetry_reader()
-                self.readers[pci] = (dev, rd, {n: rd.is_entry_available(t) for n, t in ARB_TAGS.items()})
+                self.readers[pci] = (dev, rd, {n: rd.is_entry_available(t) for n, t in self.tags.items()})
             except Exception as exc:
                 print(f"tt-umd could not open pci:{pci} for arbiter tags ({exc})", flush=True)
-        print(f"AICLK arbiter tags via tt-umd on {len(self.readers)} device(s)", flush=True)
+        print(f"AICLK arbiter tags via tt-umd on {len(self.readers)} device(s); tags {self.tags}", flush=True)
 
     def read(self, pci):
         if self.failed or pci not in self.readers:
@@ -98,7 +112,7 @@ class UmdArbReader:
         _, rd, avail = self.readers[pci]
         out = {}
         try:
-            for name, tag in ARB_TAGS.items():
+            for name, tag in self.tags.items():
                 if avail.get(name):
                     out[name] = int(rd.read_entry(tag))
         except Exception as exc:
