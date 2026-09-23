@@ -69,11 +69,13 @@ runs:
     - name: "[${{ inputs.name }}] Check the workload exists in this image"
       id: check
       shell: bash
+      env:
+        SELECTOR: ${{ inputs.selector }}   # via env: selectors carry double quotes (-k "all and duty-1") that must not be spliced into the script
       run: |
         set +e -uo pipefail
-        if [ -z "${{ inputs.selector }}" ] || [ -z "${{ inputs.image }}" ]; then echo "available=true" >> $GITHUB_OUTPUT; exit 0; fi
-        case "${{ inputs.selector }}" in exists:*)
-          P="${{ inputs.selector }}"; P="${P#exists:}"
+        if [ -z "$SELECTOR" ] || [ -z "${{ inputs.image }}" ]; then echo "available=true" >> $GITHUB_OUTPUT; exit 0; fi
+        case "$SELECTOR" in exists:*)
+          P="${SELECTOR#exists:}"
           if docker run --rm --entrypoint bash ${{ inputs.image }} -c "test -e '$P'"; then
             echo "available=true" >> $GITHUB_OUTPUT; echo "${{ inputs.name }}: $P present in the image"
           else
