@@ -6,10 +6,10 @@
   "idle_seconds": "30",
   "cooldown_seconds": "20",
   "system_power": "auto",
-  "tag": "bursty default reps",
+  "tag": "bursty reps knob",
   "max_util_fpu": "50",
   "max_util_dram": "100",
-  "bursty_reps": "1000x",
-  "requested_at": "2026-09-23T16:43:45+00:00",
+  "bursty_reps": "100x",
+  "requested_at": "2026-09-23T16:44:35+00:00",
   "requested_by": "Ezra Rassaa"
 }
