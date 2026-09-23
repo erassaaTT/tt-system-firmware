@@ -76,12 +76,6 @@ on:
         description: Free-text tag recorded in the manifest (e.g. "weekly", "fw 19.15 qual").
         type: string
         default: ""
-      system_power:
-        description: >-
-          System power collector for this run: "auto" (per board from ci_boards.json), "none" or "ipmi"
-          (in-band, Galaxy only; PCIe boards have no BMC and asking for ipmi there only warns).
-        type: string
-        default: auto
 
 # One group per run: requested runs must never wait behind an earlier one (a job stuck waiting for a
 # runner would otherwise block every later request on the PR). Runners serialise jobs themselves.
@@ -123,7 +117,7 @@ jobs:
           IN_MAX_UTIL_DRAM: ${{ inputs.max_util_dram }}
           IN_BURSTY_REPS: ${{ inputs.bursty_reps }}
           IN_MM_THROTTLE: ${{ inputs.mm_throttle }}
-          IN_SYSTEM_POWER: ${{ inputs.system_power }}
+          IN_SYSTEM_POWER: auto   # no dispatch input any more (GitHub allows 10); the PR path may still carry system_power in the JSON
           IN_TAG: ${{ inputs.tag }}
           PR_ACTION: ${{ github.event.action }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
