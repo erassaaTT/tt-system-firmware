@@ -64,6 +64,10 @@ on:
         description: Max Util DRAM utilisation % (10-90, 92, 100). Only used by the max_util subtest.
         type: string
         default: "100"
+      bursty_reps:
+        description: "Bursty (test_duty_cycle) repetitions per iteration: 100x, 1000x or 10000x (pytest id rep-<value>)."
+        type: string
+        default: "1000x"
       tag:
         description: Free-text tag recorded in the manifest (e.g. "weekly", "fw 19.15 qual").
         type: string
@@ -94,6 +98,7 @@ jobs:
       cooldown_seconds: ${{ steps.params.outputs.cooldown_seconds }}
       max_util_fpu: ${{ steps.params.outputs.max_util_fpu }}
       max_util_dram: ${{ steps.params.outputs.max_util_dram }}
+      bursty_reps: ${{ steps.params.outputs.bursty_reps }}
       system_power: ${{ steps.params.outputs.system_power }}
       tag: ${{ steps.params.outputs.tag }}
       requested_by: ${{ steps.params.outputs.requested_by }}
@@ -111,6 +116,7 @@ jobs:
           IN_COOLDOWN: ${{ inputs.cooldown_seconds }}
           IN_MAX_UTIL_FPU: ${{ inputs.max_util_fpu }}
           IN_MAX_UTIL_DRAM: ${{ inputs.max_util_dram }}
+          IN_BURSTY_REPS: ${{ inputs.bursty_reps }}
           IN_SYSTEM_POWER: ${{ inputs.system_power }}
           IN_TAG: ${{ inputs.tag }}
           PR_ACTION: ${{ github.event.action }}
@@ -135,6 +141,7 @@ jobs:
             echo "cooldown_seconds=$(get IN_COOLDOWN 20)" >> $GITHUB_OUTPUT
             echo "max_util_fpu=$(get IN_MAX_UTIL_FPU 50)"   >> $GITHUB_OUTPUT
             echo "max_util_dram=$(get IN_MAX_UTIL_DRAM 100)" >> $GITHUB_OUTPUT
+            echo "bursty_reps=$(get IN_BURSTY_REPS 1000x)"   >> $GITHUB_OUTPUT
             echo "system_power=$(get IN_SYSTEM_POWER auto)" >> $GITHUB_OUTPUT
             echo "tag=$(get IN_TAG '')"                   >> $GITHUB_OUTPUT
             echo "requested_by=${{ github.actor }}"       >> $GITHUB_OUTPUT
@@ -151,7 +158,7 @@ jobs:
             else
               echo "PR event '$PR_ACTION' is not a run request"
             fi
-            for k in boards workloads iterations idle_seconds cooldown_seconds max_util_fpu max_util_dram system_power tag requested_by; do
+            for k in boards workloads iterations idle_seconds cooldown_seconds max_util_fpu max_util_dram bursty_reps system_power tag requested_by; do
               echo "$k=$(jq -r --arg k "$k" '.[$k] // ""' "$FILE")" >> $GITHUB_OUTPUT
             done
           fi
@@ -198,6 +205,7 @@ jobs:
       POWER_CI_COOLDOWN_SECONDS: ${{ needs.gen-config.outputs.cooldown_seconds || '20' }}
       POWER_CI_MAX_UTIL_FPU: ${{ needs.gen-config.outputs.max_util_fpu || '50' }}
       POWER_CI_MAX_UTIL_DRAM: ${{ needs.gen-config.outputs.max_util_dram || '100' }}
+      POWER_CI_BURSTY_REPS: ${{ needs.gen-config.outputs.bursty_reps || '1000x' }}
       POWER_CI_SYSTEM_POWER: ${{ needs.gen-config.outputs.system_power || 'auto' }}
       POWER_CI_TAG: ${{ needs.gen-config.outputs.tag || '' }}
       POWER_CI_REQUESTED_BY: ${{ needs.gen-config.outputs.requested_by || github.actor }}
@@ -321,11 +329,11 @@ jobs:
             ff1_matmul_with_gelu|tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "with_gelu and all"
             lm_head|tests/didt/test_lm_head_matmul.py::test_lm_head_matmul -k "all"
             ff1_matmul_no_gelu|tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "all and not with_gelu"
-            bursty1|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-1"
-            bursty2|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-2"
-            bursty3|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-3"
-            bursty4|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-4"
-            bursty5|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-5"
+            bursty1|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-1"
+            bursty2|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-2"
+            bursty3|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-3"
+            bursty4|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-4"
+            bursty5|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-5"
             minimal_matmul|tests/didt/test_minimal_matmul.py::test_minimal_matmul -k "all and bf16_HiFi2"
             sdpa_op|tests/didt/test_sdpa_op.py::test_sdpa_op -k "all and bf16_HiFi2"
             binary_mul|tests/didt/test_binary_mul.py::test_binary_mul -k "all and with_gelu"
@@ -457,7 +465,7 @@ jobs:
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           cooldown-seconds: ${{ env.POWER_CI_COOLDOWN_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
-          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-1000x and duty-1\""
+          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-1\""
           image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
@@ -470,7 +478,7 @@ jobs:
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
               -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
               ${{ matrix.config.metal-image }} \
-                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-1" \
+                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-1" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
 
       - name: bursty2 subtest
@@ -484,7 +492,7 @@ jobs:
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           cooldown-seconds: ${{ env.POWER_CI_COOLDOWN_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
-          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-1000x and duty-2\""
+          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-2\""
           image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
@@ -497,7 +505,7 @@ jobs:
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
               -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
               ${{ matrix.config.metal-image }} \
-                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-2" \
+                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-2" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
 
       - name: bursty3 subtest
@@ -511,7 +519,7 @@ jobs:
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           cooldown-seconds: ${{ env.POWER_CI_COOLDOWN_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
-          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-1000x and duty-3\""
+          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-3\""
           image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
@@ -524,7 +532,7 @@ jobs:
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
               -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
               ${{ matrix.config.metal-image }} \
-                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-3" \
+                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-3" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
 
       - name: bursty4 subtest
@@ -538,7 +546,7 @@ jobs:
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           cooldown-seconds: ${{ env.POWER_CI_COOLDOWN_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
-          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-1000x and duty-4\""
+          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-4\""
           image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
@@ -551,7 +559,7 @@ jobs:
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
               -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
               ${{ matrix.config.metal-image }} \
-                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-4" \
+                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-4" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
 
       - name: bursty5 subtest
@@ -565,7 +573,7 @@ jobs:
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           cooldown-seconds: ${{ env.POWER_CI_COOLDOWN_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
-          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-1000x and duty-5\""
+          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-5\""
           image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
@@ -578,7 +586,34 @@ jobs:
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
               -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
               ${{ matrix.config.metal-image }} \
-                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-5" \
+                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-5" \
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+
+      - name: bursty6 subtest
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'bursty6') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: bursty6
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          cooldown-seconds: ${{ env.POWER_CI_COOLDOWN_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-6\""
+          image: ${{ matrix.config.metal-image }}
+          timeout-minutes: "65"
+          run: |
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
+              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
+              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
+              -e TT_MM_THROTTLE_PERF=${{ startsWith(matrix.config.board, 'bh-galaxy') && '5' || '' }} \
+              ${{ matrix.config.metal-image }} \
+                tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-6" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
 
       - name: minimal_matmul subtest
