@@ -828,6 +828,32 @@ jobs:
               ${{ matrix.config.metal-image }} \
                 -c './build/test/didt/unit_tests_didt_max_util --gtest_filter="${{ startsWith(matrix.config.board, 'bh-galaxy') && '*All*' || '*Stress*' }}"'
 
+      - name: llama_8b_demo subtest  # tt_transformers simple_text_demo with the Llama 3.1 8B Instruct weights on the runner; batch-1 on PCIe cards, data-parallel 32 on Galaxy (the upstream image's own demo suite)
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'llama_8b_demo') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: llama_8b_demo
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          cooldown-seconds: ${{ env.POWER_CI_COOLDOWN_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          selector: "exists:models/tt_transformers/demo/simple_text_demo.py"
+          image: ${{ matrix.config.metal-image }}
+          timeout-minutes: "45"
+          run: |
+            if [ ! -d "$LLAMA_INSTRUCT_DIR" ]; then echo "::error::Llama weights not found at $LLAMA_INSTRUCT_DIR on this runner"; exit 3; fi
+            docker run \
+              --entrypoint pytest \
+              --device /dev/tenstorrent \
+              -v /dev/hugepages-1G:/dev/hugepages-1G \
+              -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
+              -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
+              -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
+              ${{ matrix.config.metal-image }} \
+                models/tt_transformers/demo/simple_text_demo.py -k "${{ startsWith(matrix.config.board, 'bh-galaxy') && 'performance and ci-32' || 'performance and batch-1' }}" ${{ startsWith(matrix.config.board, 'bh-galaxy') && '--data_parallel 32' || '' }} --timeout 1200
+
       - name: Cleanup
         if: ${{ always() }}
         run: |
