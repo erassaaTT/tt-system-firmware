@@ -89,6 +89,7 @@ runs:
         OUT=$(docker run --rm --entrypoint pytest --device /dev/tenstorrent -v /dev/hugepages-1G:/dev/hugepages-1G ${{ inputs.image }} \
               --collect-only -q ${{ inputs.selector }} 2>&1 | tail -6 || true)
         N=$(echo "$OUT" | grep -oE '[0-9]+ tests? collected|[0-9]+/[0-9]+ tests? collected' | grep -oE '^[0-9]+' | head -1 || true)
+        [ -n "$N" ] || N=$(echo "$OUT" | grep -oE 'collected [0-9]+ items?( / [0-9]+ deselected / [0-9]+ selected)?' | tail -1 | grep -oE '[0-9]+ selected|collected [0-9]+' | grep -oE '[0-9]+' | tail -1 || true)
         echo "collect-only output: $OUT"
         if [ -n "$N" ] && [ "$N" -gt 0 ]; then
           echo "available=true" >> $GITHUB_OUTPUT; echo "${{ inputs.name }}: $N test(s) collected"

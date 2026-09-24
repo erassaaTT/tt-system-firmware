@@ -358,9 +358,12 @@ jobs:
             esac
             eval "set -- $selector"   # the selector carries its own quoting (-k "all and duty-1"); eval splits it like the subtest step does
             out=$(docker run --rm --entrypoint pytest --device /dev/tenstorrent -v /dev/hugepages-1G:/dev/hugepages-1G ${{ matrix.config.metal-image }} \
-                  --collect-only -q "$@" 2>&1 | grep -E "collected|error" | tail -3)
+                  --collect-only -q "$@" 2>&1 | grep -E "collected|error|Error" | tail -4)
             n=$(echo "$out" | grep -oE '^[0-9]+ tests? collected|[0-9]+/[0-9]+ tests? collected' | grep -oE '^[0-9]+' | head -1)
-            if [ -n "$n" ] && [ "$n" -gt 0 ]; then echo "OK   $name: $n test(s) collected"; else echo "::error::$name collects nothing: $out"; rc=1; fi
+            [ -n "$n" ] || n=$(echo "$out" | grep -oE 'collected [0-9]+ items?( / [0-9]+ deselected / [0-9]+ selected)?' | tail -1 | grep -oE '[0-9]+ selected|collected [0-9]+' | grep -oE '[0-9]+' | tail -1)
+            if [ -n "$n" ] && [ "$n" -gt 0 ]; then echo "OK   $name: $n test(s) collected"
+            elif echo " wan_16k wan_24k max_util " | grep -q " $name "; then echo "::warning::$name: not in this image yet (pending)"
+            else echo "::error::$name collects nothing: $out"; rc=1; fi
           done <<'SELECTORS'
           resnet_conv|tests/didt/test_resnet_conv.py::test_resnet_conv -k "all"
           ff1_matmul_with_gelu|tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "with_gelu and all"
@@ -372,8 +375,8 @@ jobs:
           sdpa_op|tests/didt/test_sdpa_op.py::test_sdpa_op -k "all and bf16_HiFi2"
           binary_mul|tests/didt/test_binary_mul.py::test_binary_mul -k "all and with_gelu"
           mla_sdpa|tests/didt/test_mla_sdpa.py::test_mla_sdpa -k "all"
-          deepseek_v3_mla_matmul|tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul
-          deepseek_v3_gate_matmul|tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul
+          deepseek_v3_mla_matmul|tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul -k "${{ startsWith(matrix.config.board, 'bh-galaxy') && 'galaxy' || '1chips' }}"
+          deepseek_v3_gate_matmul|tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul -k "${{ startsWith(matrix.config.board, 'bh-galaxy') && 'galaxy' || '1chips' }}"
           llama_8b_demo|exists:models/tt_transformers/demo/simple_text_demo.py
           wan_16k|models/tt_dit/tests/models/wan2_2/test_transformer_wan.py::test_sweep_wan_seqs -k "blackhole-16k-ring"
           wan_transformer_model|models/tt_dit/tests/models/wan2_2/test_transformer_wan.py::test_wan_transformer_model -k "bh_4x8sp1tp0 and 14b-720p"
@@ -768,7 +771,7 @@ jobs:
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           cooldown-seconds: ${{ env.POWER_CI_COOLDOWN_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
-          selector: "tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul"
+          selector: "tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul -k \"${{ startsWith(matrix.config.board, 'bh-galaxy') && 'galaxy' || '1chips' }}\""
           image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
@@ -781,7 +784,7 @@ jobs:
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
-                tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul \
+                tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul -k "${{ startsWith(matrix.config.board, 'bh-galaxy') && 'galaxy' || '1chips' }}" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
 
       - name: deepseek_v3_gate_matmul subtest  # Galaxy mesh only (8x4)
@@ -795,7 +798,7 @@ jobs:
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           cooldown-seconds: ${{ env.POWER_CI_COOLDOWN_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
-          selector: "tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul"
+          selector: "tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul -k \"${{ startsWith(matrix.config.board, 'bh-galaxy') && 'galaxy' || '1chips' }}\""
           image: ${{ matrix.config.metal-image }}
           timeout-minutes: "65"
           run: |
@@ -808,7 +811,7 @@ jobs:
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
-                tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul \
+                tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul -k "${{ startsWith(matrix.config.board, 'bh-galaxy') && 'galaxy' || '1chips' }}" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
 
       - name: wan_16k subtest  # SYS-4633 WAN 2.2 seq-len sweep, 16k ring; Galaxy 4x8; skipped until tt-metal branch cglagovich/wan_sweep_seqs is in the image
