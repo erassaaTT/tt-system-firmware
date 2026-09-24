@@ -347,42 +347,39 @@ jobs:
       - name: validate subtests (collect-only)
         if: ${{ env.POWER_CI_WORKLOADS == 'validate' }}
         run: |
-          set -uo pipefail
+          set +e -uo pipefail
           rc=0
           while IFS='|' read -r name selector; do
-            [ -z "$name" ] && continue
-            out=$(docker run --rm --entrypoint bash ${{ matrix.config.metal-image }} -c \
-              "cd /tt-metal 2>/dev/null || cd \$TT_METAL_HOME 2>/dev/null || true; pytest --collect-only -q $selector 2>&1 | tail -3")
+            name="${name#"${name%%[![:space:]]*}"}"; [ -z "$name" ] && continue
+            case "$selector" in
+              exists:*) p="${selector#exists:}"
+                if docker run --rm --entrypoint bash ${{ matrix.config.metal-image }} -c "test -e '$p'"; then echo "OK   $name: $p present"; else echo "::warning::$name: $p not in the image (pending)"; fi
+                continue ;;
+            esac
+            out=$(docker run --rm --entrypoint pytest --device /dev/tenstorrent -v /dev/hugepages-1G:/dev/hugepages-1G ${{ matrix.config.metal-image }} \
+                  --collect-only -q $selector 2>&1 | tail -3)
             n=$(echo "$out" | grep -oE '^[0-9]+ tests? collected|[0-9]+/[0-9]+ tests? collected' | grep -oE '^[0-9]+' | head -1)
             if [ -n "$n" ] && [ "$n" -gt 0 ]; then echo "OK   $name: $n test(s) collected"; else echo "::error::$name collects nothing: $out"; rc=1; fi
           done <<'SELECTORS'
-            resnet_conv|tests/didt/test_resnet_conv.py::test_resnet_conv -k "all"
-            ff1_matmul_with_gelu|tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "with_gelu and all"
-            lm_head|tests/didt/test_lm_head_matmul.py::test_lm_head_matmul -k "all"
-            ff1_matmul_no_gelu|tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "all and not with_gelu"
-            bursty1|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-1"
-            bursty2|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-2"
-            bursty3|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-3"
-            bursty4|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-4"
-            bursty5|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-5"
-            minimal_matmul|tests/didt/test_minimal_matmul.py::test_minimal_matmul -k "all and bf16_HiFi2"
-            sdpa_op|tests/didt/test_sdpa_op.py::test_sdpa_op -k "all and bf16_HiFi2"
-            binary_mul|tests/didt/test_binary_mul.py::test_binary_mul -k "all and with_gelu"
-            mla_sdpa|tests/didt/test_mla_sdpa.py::test_mla_sdpa -k "all"
-            deepseek_v3_mla_matmul|tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul
-            deepseek_v3_gate_matmul|tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul
+          resnet_conv|tests/didt/test_resnet_conv.py::test_resnet_conv -k "all"
+          ff1_matmul_with_gelu|tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "with_gelu and all"
+          ff1_matmul_no_gelu|tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "all and not with_gelu"
+          lm_head|tests/didt/test_lm_head_matmul.py::test_lm_head_matmul -k "all"
+          bursty1|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-1"
+          bursty6|tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-1000x and duty-6"
+          minimal_matmul|tests/didt/test_minimal_matmul.py::test_minimal_matmul -k "all and bf16_HiFi2"
+          sdpa_op|tests/didt/test_sdpa_op.py::test_sdpa_op -k "all and bf16_HiFi2"
+          binary_mul|tests/didt/test_binary_mul.py::test_binary_mul -k "all and with_gelu"
+          mla_sdpa|tests/didt/test_mla_sdpa.py::test_mla_sdpa -k "all"
+          deepseek_v3_mla_matmul|tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul
+          deepseek_v3_gate_matmul|tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul
+          llama_8b_demo|exists:models/tt_transformers/demo/simple_text_demo.py
+          wan_16k|models/tt_dit/tests/models/wan2_2/test_transformer_wan.py::test_sweep_wan_seqs -k "blackhole-16k-ring"
+          wan_transformer_model|models/tt_dit/tests/models/wan2_2/test_transformer_wan.py::test_wan_transformer_model -k "bh_4x8sp1tp0 and 14b-720p"
+          max_util|exists:build/test/didt/unit_tests_didt_max_util
           SELECTORS
           exit $rc
 
-      # ------------------------------------------------------------------------
-      # Subtests run sequentially, each wrapped in its own telemetry capture by the
-      # power-telemetry-subtest action (idle -> start -> run -> stop -> upload).
-      # To add a workload copy one block and set name / run; add its name to the
-      # `workloads` input description above. Left out on purpose: tests/didt sdxl_* (skip_for_blackhole),
-      # sharded_ff1 (hang repro), Max Util (gtest only on unmerged tt-metal branch rd/max_util, not in the
-      # container), WAN 2.2 power test (unmerged branch + Wan weights). The dashboard matches artifact names to
-      # its workload catalog, so keep names stable.
-      # ------------------------------------------------------------------------
       - name: resnet_conv subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'resnet_conv') }}
         uses: ./.github/actions/power-telemetry-subtest
