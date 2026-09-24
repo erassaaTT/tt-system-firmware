@@ -291,8 +291,34 @@ jobs:
             INLET_C="$(printf '%s\n' "$IPMI_OUT" | awk -F'|' '/TEMP_INLET/ {gsub(/ degrees C/,"",$5); gsub(/ /,"",$5); print $5; exit}')"
             FAN_RPMS="$(printf '%s\n' "$IPMI_OUT" | awk -F'|' '/RPM/ {gsub(/ RPM/,"",$5); gsub(/ /,"",$5); if ($5 ~ /^[0-9]+$/) printf "%s%s", (n++?",":""), $5}')"
           fi
+          # model weights present on this runner (what the model workloads can use without a download)
+          MODELS_JSON="$(python3 - <<'PY2'
+          import json, os
+          roots = ["/opt/tenstorrent/hf-models", "/opt/tenstorrent/models", "/localdev", "/mnt/MLPerf", os.path.expanduser("~/.cache/huggingface/hub")]
+          found = {}
+          for root in roots:
+              if not os.path.isdir(root):
+                  continue
+              for dirpath, dirs, files in os.walk(root):
+                  depth = dirpath[len(root):].count(os.sep)
+                  if depth > 3:
+                      dirs[:] = []
+                      continue
+                  if any(f.endswith((".safetensors", ".bin", ".pth", ".gguf")) or f == "config.json" for f in files):
+                      size = 0
+                      for f in files:
+                          try:
+                              size += os.path.getsize(os.path.join(dirpath, f))
+                          except OSError:
+                              pass
+                      found[dirpath] = round(size / 1e9, 1)
+                      dirs[:] = []
+          print(json.dumps(found))
+          PY2
+          )"
           python3 - "$ENV_DIR/host.json" <<PY
           import json, os, sys
+          models = json.loads('''$MODELS_JSON''') if '''$MODELS_JSON'''.strip().startswith("{") else {}
           fans = [int(x) for x in "$FAN_RPMS".split(",") if x.strip().isdigit()]
           try:
               cpld = json.loads('''$CPLD_JSON''') or None
@@ -306,6 +332,7 @@ jobs:
             "bmc_version": "$BMC_VERSION" or None, "inlet_temp_c": float("$INLET_C") if "$INLET_C" else None,
             "fan_rpm": fans or None, "fan_rpm_mean": (sum(fans) / len(fans)) if fans else None,
             "cpld_versions": cpld,
+            "models": models,  # {dir: GB} of weight directories found on the runner
             "fw_repo": "${{ github.repository }}", "fw_repo_sha": "${{ github.sha }}", "fw_repo_ref": "${{ github.ref_name }}",
             "run_id": "${{ github.run_id }}", "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
             "event": "${{ github.event_name }}", "pr_number": "${{ github.event.pull_request.number }}", "tag": "$POWER_CI_TAG",
