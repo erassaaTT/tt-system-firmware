@@ -98,6 +98,8 @@ jobs:
       max_util_dram: ${{ steps.params.outputs.max_util_dram }}
       bursty_reps: ${{ steps.params.outputs.bursty_reps }}
       mm_throttle: ${{ steps.params.outputs.mm_throttle }}
+      idle_run_seconds: ${{ steps.params.outputs.idle_run_seconds }}
+      subtest_timeout_min: ${{ steps.timeout.outputs.minutes }}
       system_power: ${{ steps.params.outputs.system_power }}
       tag: ${{ steps.params.outputs.tag }}
       requested_by: ${{ steps.params.outputs.requested_by }}
@@ -117,6 +119,7 @@ jobs:
           IN_MAX_UTIL_DRAM: ${{ inputs.max_util_dram }}
           IN_BURSTY_REPS: ${{ inputs.bursty_reps }}
           IN_MM_THROTTLE: ${{ inputs.mm_throttle }}
+          IN_IDLE_RUN: "240"   # idle-mode capture length; JSON-only knob (workflow_dispatch is at GitHub's 10-input limit)
           IN_SYSTEM_POWER: auto   # no dispatch input any more (GitHub allows 10); the PR path may still carry system_power in the JSON
           IN_TAG: ${{ inputs.tag }}
           PR_ACTION: ${{ github.event.action }}
@@ -143,6 +146,7 @@ jobs:
             echo "max_util_dram=$(get IN_MAX_UTIL_DRAM 100)" >> $GITHUB_OUTPUT
             echo "bursty_reps=$(get IN_BURSTY_REPS 1000x)"   >> $GITHUB_OUTPUT
             echo "mm_throttle=$(get IN_MM_THROTTLE auto)"     >> $GITHUB_OUTPUT
+            echo "idle_run_seconds=$(get IN_IDLE_RUN 240)"   >> $GITHUB_OUTPUT
             echo "system_power=$(get IN_SYSTEM_POWER auto)" >> $GITHUB_OUTPUT
             echo "tag=$(get IN_TAG '')"                   >> $GITHUB_OUTPUT
             echo "requested_by=${{ github.actor }}"       >> $GITHUB_OUTPUT
@@ -159,11 +163,20 @@ jobs:
             else
               echo "PR event '$PR_ACTION' is not a run request"
             fi
-            for k in boards workloads iterations idle_seconds cooldown_seconds max_util_fpu max_util_dram bursty_reps mm_throttle system_power tag requested_by; do
+            for k in boards workloads iterations idle_seconds cooldown_seconds max_util_fpu max_util_dram bursty_reps mm_throttle idle_run_seconds system_power tag requested_by; do
               echo "$k=$(jq -r --arg k "$k" '.[$k] // ""' "$FILE")" >> $GITHUB_OUTPUT
             done
           fi
           echo "run=$RUN" >> $GITHUB_OUTPUT
+      - id: timeout
+        name: Per-subtest timeout from the iteration count
+        env:
+          IT: ${{ steps.params.outputs.iterations }}
+        run: |
+          it="${IT:-100}"; case "$it" in ''|*[!0-9]*) it=100;; esac
+          # ~0.06 min per iteration on top of 65 min of setup/compile margin; capped at the job limit
+          m=$(( 65 + it * 6 / 100 )); [ "$m" -gt 2100 ] && m=2100
+          echo "minutes=$m" >> "$GITHUB_OUTPUT"; echo "dI/dt subtest timeout: ${m} min for ${it} iterations"
       - id: gen-config
         if: ${{ steps.params.outputs.run == 'true' }}
         shell: bash
@@ -196,7 +209,7 @@ jobs:
       matrix:
         config: ${{ fromJson(needs.gen-config.outputs.matrix-config) }}
     runs-on: ${{ matrix.config.power-ci-label }}
-    timeout-minutes: 350
+    timeout-minutes: 2160   # GitHub's job maximum; long iteration counts run for hours
     env:
       LLAMA_INSTRUCT_DIR: /opt/tenstorrent/hf-models/meta-llama/Llama-3.1-8B-Instruct/
       VENV_DIR: ${{ github.workspace }}/.telem-env
@@ -208,6 +221,8 @@ jobs:
       POWER_CI_MAX_UTIL_DRAM: ${{ needs.gen-config.outputs.max_util_dram || '100' }}
       POWER_CI_BURSTY_REPS: ${{ needs.gen-config.outputs.bursty_reps || '1000x' }}
       POWER_CI_MM_THROTTLE: ${{ needs.gen-config.outputs.mm_throttle || 'auto' }}
+      POWER_CI_IDLE_RUN_SECONDS: ${{ needs.gen-config.outputs.idle_run_seconds || '240' }}
+      POWER_CI_SUBTEST_TIMEOUT_MIN: ${{ needs.gen-config.outputs.subtest_timeout_min || '65' }}
       # ready-made `docker run` argument: a level 1-5 applies TT_MM_THROTTLE_PERF to every subtest; auto/off leave it empty
       POWER_CI_MM_THROTTLE_ARG: ${{ contains('1 2 3 4 5', needs.gen-config.outputs.mm_throttle) && needs.gen-config.outputs.mm_throttle != '' && format('-e TT_MM_THROTTLE_PERF={0}', needs.gen-config.outputs.mm_throttle) || '' }}
       POWER_CI_SYSTEM_POWER: ${{ needs.gen-config.outputs.system_power || 'auto' }}
@@ -384,6 +399,51 @@ jobs:
           SELECTORS
           exit $rc
 
+      - name: idle subtest  # nothing running: telemetry only for idle_run_seconds (default 240 s)
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'idle') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: idle
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: 0
+          cooldown-seconds: 0
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          image: ${{ matrix.config.metal-image }}
+          timeout-minutes: "30"
+          run: |
+            echo "idle capture for ${POWER_CI_IDLE_RUN_SECONDS}s (no workload)"
+            sleep "${POWER_CI_IDLE_RUN_SECONDS}"
+
+      - name: mission_mode subtest  # tt-smi open on the host for idle_run_seconds: chips idle, management path polled continuously
+        if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'mission_mode') }}
+        uses: ./.github/actions/power-telemetry-subtest
+        with:
+          name: mission_mode
+          workload: power_measurement_CI
+          board: ${{ matrix.config.board }}
+          venv-dir: ${{ env.VENV_DIR }}
+          idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
+          cooldown-seconds: ${{ env.POWER_CI_COOLDOWN_SECONDS }}
+          system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
+          image: ${{ matrix.config.metal-image }}
+          timeout-minutes: "30"
+          run: |
+            DUR="${POWER_CI_IDLE_RUN_SECONDS}"
+            export TERM=xterm-256color COLUMNS=200 LINES=60
+            start=$(date +%s)
+            # the tt-smi TUI needs a pseudo-terminal; `script` provides one. It polls every chip continuously while open.
+            timeout --preserve-status "${DUR}s" script -qfec "$VENV_DIR/bin/tt-smi" /dev/null > /dev/null 2>&1 || true
+            el=$(( $(date +%s) - start ))
+            if [ "$el" -lt $(( DUR - 5 )) ]; then
+              echo "::warning::tt-smi TUI exited after ${el}s; polling snapshots for the rest of the window"
+              end=$(( start + DUR ))
+              while [ "$(date +%s)" -lt "$end" ]; do "$VENV_DIR/bin/tt-smi" -f /tmp/mission_mode_snapshot.json >/dev/null 2>&1 || true; sleep 1; done
+            fi
+            echo "mission mode held for $(( $(date +%s) - start ))s"
+            exit 0
+
       - name: resnet_conv subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'resnet_conv') }}
         uses: ./.github/actions/power-telemetry-subtest
@@ -397,7 +457,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_resnet_conv.py::test_resnet_conv -k \"all\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -422,7 +482,7 @@ jobs:
           idle-seconds: ${{ env.POWER_CI_IDLE_SECONDS }}
           cooldown-seconds: ${{ env.POWER_CI_COOLDOWN_SECONDS }}
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -449,7 +509,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_lm_head_matmul.py::test_lm_head_matmul -k \"all\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -476,7 +536,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_ff1_matmul.py::test_ff1_matmul -k \"all and not with_gelu\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -503,7 +563,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-1\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -530,7 +590,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-2\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -557,7 +617,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-3\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -584,7 +644,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-4\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -611,7 +671,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-5\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -638,7 +698,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_duty_cycle.py::test_duty_cycle -k \"all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-6\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -665,7 +725,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_minimal_matmul.py::test_minimal_matmul -k \"all and bf16_HiFi2\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -692,7 +752,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_sdpa_op.py::test_sdpa_op -k \"all and bf16_HiFi2\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -719,7 +779,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_binary_mul.py::test_binary_mul -k \"all and with_gelu\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -746,7 +806,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_mla_sdpa.py::test_mla_sdpa -k \"all\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -773,7 +833,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul -k \"${{ startsWith(matrix.config.board, 'bh-galaxy') && 'galaxy' || '1chips' }}\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
@@ -800,7 +860,7 @@ jobs:
           system-power: ${{ (env.POWER_CI_SYSTEM_POWER != 'auto' && env.POWER_CI_SYSTEM_POWER) || matrix.config.system-power || 'none' }}
           selector: "tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul -k \"${{ startsWith(matrix.config.board, 'bh-galaxy') && 'galaxy' || '1chips' }}\""
           image: ${{ matrix.config.metal-image }}
-          timeout-minutes: "65"
+          timeout-minutes: ${{ env.POWER_CI_SUBTEST_TIMEOUT_MIN }}
           run: |
             docker run \
               --entrypoint pytest \
