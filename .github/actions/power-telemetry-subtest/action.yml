@@ -172,7 +172,10 @@ runs:
         date -u +%Y-%m-%dT%H:%M:%SZ > "$TELEM_DIR/workload_ended_at"
         echo "$RC" > "$TELEM_DIR/workload_exit_code"
         echo "exit_code=$RC" >> "$GITHUB_OUTPUT"
-        exit "$RC"
+        # A failed workload must not skip the remaining subtests: record it (manifest status=failed, ::error annotation)
+        # and let the job continue; the workflow's "Subtest summary" step fails the job at the end if anything failed.
+        if [ "$RC" -ne 0 ]; then echo "::error::${{ inputs.name }} failed with exit code $RC (see workload.log in the artifact)"; fi
+        exit 0
 
     - name: "[${{ inputs.name }}] Stop telemetry and write manifest"
       if: ${{ always() && steps.check.outputs.available == 'true' }}

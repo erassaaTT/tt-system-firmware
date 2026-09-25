@@ -469,7 +469,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_resnet_conv.py::test_resnet_conv -k "all" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: ff1_matmul with_gelu subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'ff1_matmul_with_gelu') }}
@@ -494,7 +494,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "with_gelu and all" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: lm_head subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'lm_head') }}
@@ -521,7 +521,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_lm_head_matmul.py::test_lm_head_matmul -k "all" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: ff1_matmul_no_gelu subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'ff1_matmul_no_gelu') }}
@@ -548,7 +548,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_ff1_matmul.py::test_ff1_matmul -k "all and not with_gelu" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: bursty1 subtest  # Bursty1 = duty-1 of test_duty_cycle (LLK 'Bursty' page); TT_MM_THROTTLE_PERF=5 on Galaxy (unthrottled Bursty can trip a Galaxy)
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'bursty1') }}
@@ -575,7 +575,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-1" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: bursty2 subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'bursty2') }}
@@ -602,7 +602,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-2" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: bursty3 subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'bursty3') }}
@@ -629,7 +629,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-3" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: bursty4 subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'bursty4') }}
@@ -656,7 +656,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-4" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: bursty5 subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'bursty5') }}
@@ -683,7 +683,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-5" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: bursty6 subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'bursty6') }}
@@ -710,7 +710,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-6" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: minimal_matmul subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'minimal_matmul') }}
@@ -737,7 +737,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_minimal_matmul.py::test_minimal_matmul -k "all and bf16_HiFi2" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: sdpa_op subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'sdpa_op') }}
@@ -764,7 +764,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_sdpa_op.py::test_sdpa_op -k "all and bf16_HiFi2" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: binary_mul subtest
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'binary_mul') }}
@@ -791,7 +791,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_binary_mul.py::test_binary_mul -k "all and with_gelu" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: mla_sdpa subtest  # Blackhole only
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'mla_sdpa') }}
@@ -818,7 +818,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_mla_sdpa.py::test_mla_sdpa -k "all" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: deepseek_v3_mla_matmul subtest  # Galaxy mesh only (8x4); no test is collected on a single card
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'deepseek_v3_mla_matmul') }}
@@ -845,7 +845,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_mla_matmul -k "${{ startsWith(matrix.config.board, 'bh-galaxy') && 'galaxy' || '1chips' }}" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: deepseek_v3_gate_matmul subtest  # Galaxy mesh only (8x4)
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'deepseek_v3_gate_matmul') }}
@@ -872,7 +872,7 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_deepseek_v3_128k_matmul.py::test_deepseek_v3_gate_matmul -k "${{ startsWith(matrix.config.board, 'bh-galaxy') && 'galaxy' || '1chips' }}" \
-                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0
+                --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
 
       - name: wan_16k subtest  # SYS-4633 WAN 2.2 seq-len sweep, 16k ring; Galaxy 4x8; skipped until tt-metal branch cglagovich/wan_sweep_seqs is in the image
         if: ${{ env.POWER_CI_WORKLOADS == 'all' || contains(env.POWER_CI_WORKLOADS, 'wan_16k') }}
@@ -995,6 +995,18 @@ jobs:
               ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 models/tt_transformers/demo/simple_text_demo.py -k "${{ startsWith(matrix.config.board, 'bh-galaxy') && 'performance and ci-32' || 'performance and batch-1' }}" ${{ startsWith(matrix.config.board, 'bh-galaxy') && '--data_parallel 32' || '' }} --timeout 1200
+
+      - name: Subtest summary
+        if: ${{ always() }}
+        run: |
+          rc=0
+          for m in "${{ github.workspace }}"/telemetry_output/*/manifest.json; do
+            [ -f "$m" ] || continue
+            st=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('status',''))" "$m")
+            printf '%-26s %s\n' "$(basename "$(dirname "$m")")" "$st"
+            [ "$st" = "failed" ] && rc=1
+          done
+          exit $rc
 
       - name: Cleanup
         if: ${{ always() }}
