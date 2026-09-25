@@ -306,6 +306,20 @@ jobs:
             INLET_C="$(printf '%s\n' "$IPMI_OUT" | awk -F'|' '/TEMP_INLET/ {gsub(/ degrees C/,"",$5); gsub(/ /,"",$5); print $5; exit}')"
             FAN_RPMS="$(printf '%s\n' "$IPMI_OUT" | awk -F'|' '/RPM/ {gsub(/ RPM/,"",$5); gsub(/ /,"",$5); if ($5 ~ /^[0-9]+$/) printf "%s%s", (n++?",":""), $5}')"
           fi
+          # QSFP cabling (Galaxy only): the way the team defines it is "which cabling descriptor does the cluster match",
+          # so ask tt-metal's own validator (no traffic) for XY+Z, then XY, then no QSFP. Logs kept in the artifact.
+          QSFP=""
+          if [[ "${{ matrix.config.board }}" == bh-galaxy* ]]; then
+            for topo in "xy_torus_z_ports:XY+Z" "xy_torus:XY" "mesh:none"; do
+              d="${topo%%:*}"; label="${topo##*:}"
+              if timeout --preserve-status 180s docker run --rm --device /dev/tenstorrent -v /dev/hugepages-1G:/dev/hugepages-1G --entrypoint bash \
+                   ${{ matrix.config.metal-image }} -c "./build/tools/scaleout/run_cluster_validation --cabling-descriptor-path tools/tests/scaleout/cabling_descriptors/bh_galaxy_${d}.textproto --hard-fail" \
+                   > "$ENV_DIR/cabling_check_${d}.txt" 2>&1; then
+                QSFP="$label"; echo "QSFP cabling: $label (matches bh_galaxy_${d})"; break
+              fi
+            done
+            [ -n "$QSFP" ] || { QSFP="unknown"; echo "::warning::QSFP cabling: no descriptor matched (see cabling_check_*.txt)"; }
+          fi
           # model weights present on this runner (what the model workloads can use without a download)
           MODELS_JSON="$(python3 - <<'PY2'
           import json, os
@@ -348,6 +362,7 @@ jobs:
             "fan_rpm": fans or None, "fan_rpm_mean": (sum(fans) / len(fans)) if fans else None,
             "cpld_versions": cpld,
             "models": models,  # {dir: GB} of weight directories found on the runner
+            "qsfp_config": "$QSFP" or None,  # Galaxy: XY+Z / XY / none / unknown, from tt-metal's cabling validator
             "fw_repo": "${{ github.repository }}", "fw_repo_sha": "${{ github.sha }}", "fw_repo_ref": "${{ github.ref_name }}",
             "run_id": "${{ github.run_id }}", "run_url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
             "event": "${{ github.event_name }}", "pr_number": "${{ github.event.pull_request.number }}", "tag": "$POWER_CI_TAG",
