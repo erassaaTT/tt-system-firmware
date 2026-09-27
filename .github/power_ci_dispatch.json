@@ -6,12 +6,12 @@
   "idle_seconds": "30",
   "cooldown_seconds": "20",
   "system_power": "auto",
-  "tag": "reader fix check",
+  "tag": "qsfp idle check",
   "max_util_fpu": "50",
   "max_util_dram": "100",
   "bursty_reps": "1000x",
   "mm_throttle": "auto",
   "idle_run_seconds": "120",
-  "requested_at": "2026-09-27T04:24:17+00:00",
+  "requested_at": "2026-09-27T05:17:07+00:00",
   "requested_by": "Ezra Rassaa"
 }
