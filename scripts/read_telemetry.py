@@ -66,58 +66,54 @@ def extract_top_gddr(value, controller_id):
 
 # Telemetry tag ids from tt-system-firmware include/tenstorrent/telemetry_tags.h (the ids, not the table positions).
 # AICLK_ARB_MAX = arb_max_freq | (arbiter << 16); arbiter 0 fmax, 1 tdp, 2 fast_tdc, 3 tdc, 4 thm, 5 board_power,
-# 6 voltage, 7 gddr_thm, 8 doppler_slow, 9 doppler_critical, 10 host_fmax. tt_umd.TelemetryTag members are preferred when present.
+# 6 voltage, 7 gddr_thm, 8 doppler_slow, 9 doppler_critical, 10 host_fmax.
 ARB_TAGS = {"AICLK_ARB_MIN": 65, "AICLK_ARB_MAX": 66, "KERNEL_THROTTLER": 75}
 
 
-def _resolve_tags():
-    try:
-        from tt_umd import TelemetryTag
-    except Exception:
-        return dict(ARB_TAGS)
-    out = {}
-    for name, fallback in ARB_TAGS.items():
-        member = getattr(TelemetryTag, name, None)
-        out[name] = member if member is not None else fallback
-    return out
+class ArbReader:
+    """Reads the telemetry entries pyluwen's struct does not expose (AICLK arbiters, kernel throttler) straight from the
+    firmware telemetry table over the same AXI path pyluwen itself uses: table address in ARC SCRATCH_RAM[13], then
+    [version][entry_count][entries: tag | offset<<16][data...]. Read-only; no device init. (tt-umd's TTDevice init was
+    used before and woke the chips: Galaxy idle went from 13 W to 26 W per chip while the reader ran.)"""
 
-
-class UmdArbReader:
-    """Reads the telemetry entries pyluwen's struct does not expose (AICLK arbiters, kernel throttler) through tt-umd.
-    Both tt-umd and pyluwen only read ARC memory, so they can share the devices. Disabled on the first failure."""
-
-    def __init__(self, pci_ids):
-        self.readers = {}
-        self.failed = False
-        self.tags = _resolve_tags()
-        try:
-            from tt_umd import TTDevice
-        except Exception as exc:  # tt-umd not installed
-            print(f"tt-umd not available; AICLK arbiter tags will not be recorded ({exc})", flush=True)
-            self.failed = True
-            return
-        for pci in pci_ids:
+    def __init__(self, bh_chips):
+        self.addrs = {}   # pci index -> {tag name: data address}
+        self.chips = {}
+        for pci, chip in bh_chips.items():
             try:
-                dev = TTDevice.create(pci)
-                dev.init_tt_device()  # required before any reader call ("cannot be called before initializing TTDevice")
-                rd = dev.get_arc_telemetry_reader()
-                self.readers[pci] = (dev, rd, {n: rd.is_entry_available(t) for n, t in self.tags.items()})
+                scratch13 = chip.axi_translate("arc_ss.reset_unit.SCRATCH_RAM[13]").addr
+                base = chip.axi_read32(scratch13)
+                if not (0x10000000 <= base <= 0x1007FFFF):
+                    raise RuntimeError(f"telemetry table address {base:#x} outside CSM")
+                entry_count = chip.axi_read32(base + 4)
+                if not (0 < entry_count < 1024):
+                    raise RuntimeError(f"implausible entry count {entry_count}")
+                data_base = base + 8 + 4 * entry_count
+                found = {}
+                for i in range(entry_count):
+                    entry = chip.axi_read32(base + 8 + 4 * i)
+                    tag, offset = entry & 0xFFFF, (entry >> 16) & 0xFFFF
+                    for name, want in ARB_TAGS.items():
+                        if tag == want:
+                            found[name] = data_base + 4 * offset
+                self.addrs[pci] = found
+                self.chips[pci] = chip
             except Exception as exc:
-                print(f"tt-umd could not open pci:{pci} for arbiter tags ({exc})", flush=True)
-        print(f"AICLK arbiter tags via tt-umd on {len(self.readers)} device(s); tags {self.tags}", flush=True)
+                print(f"arbiter tags unavailable on pci:{pci} ({exc})", flush=True)
+        print(f"AICLK arbiter tags via pyluwen AXI on {len(self.addrs)} device(s): {sorted({n for a in self.addrs.values() for n in a})}", flush=True)
 
     def read(self, pci):
-        if self.failed or pci not in self.readers:
+        addrs = self.addrs.get(pci)
+        if not addrs:
             return {}
-        _, rd, avail = self.readers[pci]
+        chip = self.chips[pci]
         out = {}
         try:
-            for name, tag in self.tags.items():
-                if avail.get(name):
-                    out[name] = int(rd.read_entry(tag))
+            for name, addr in addrs.items():
+                out[name] = int(chip.axi_read32(addr))
         except Exception as exc:
-            print(f"tt-umd read failed on pci:{pci}; arbiter tags disabled ({exc})", flush=True)
-            self.failed = True
+            print(f"arbiter read failed on pci:{pci}; disabled for this device ({exc})", flush=True)
+            self.addrs[pci] = {}
             return {}
         return out
 
@@ -246,7 +242,7 @@ def parse_args():
         "--pad", action="store_true", help="Pad the output csv with -1 when read fails"
     )
     parser.add_argument(
-        "--no-umd", action="store_true", help="Do not read AICLK arbiter / kernel-throttler tags through tt-umd"
+        "--no-umd", action="store_true", help="Do not read the AICLK arbiter / kernel-throttler tags from the telemetry table"
     )
     parser.add_argument("--vf", action="store_true", help="Run in vf sweep mode")
     parser.add_argument(
@@ -269,7 +265,15 @@ if __name__ == "__main__":
             devices.append(device)
             pci_ids.append(i)
     if not args.no_umd:
-        ARB_READER = UmdArbReader(pci_ids)
+        bh_chips = {}
+        for pci, device in zip(pci_ids, devices):
+            try:
+                bh = device.force_upgrade().as_bh()
+                if bh is not None:
+                    bh_chips[pci] = bh
+            except Exception:
+                pass
+        ARB_READER = ArbReader(bh_chips)
 
     print("Starting telemetry collection")
     try:
