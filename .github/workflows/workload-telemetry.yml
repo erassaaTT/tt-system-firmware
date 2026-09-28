@@ -327,8 +327,8 @@ jobs:
                 > "$log" 2>&1 || true
               docker rm -f "$cname" >/dev/null 2>&1 || true
               grep -q "Physical Discovery Complete" "$log" || { echo "::warning::cabling check ${d}: discovery did not complete (see $(basename "$log"))"; continue; }
-              missing=$(grep -oE 'found [0-9]+ missing port/cable connections' "$log" | grep -oE '[0-9]+' | head -1); missing=${missing:-0}
-              extra=$(grep -oE 'found [0-9]+ extra port/cable connections' "$log" | grep -oE '[0-9]+' | head -1); extra=${extra:-0}
+              missing=$(grep -oE 'found [0-9]+ missing port/cable connections' "$log" | grep -oE '[0-9]+' | head -1 || true); missing=${missing:-0}
+              extra=$(grep -oE 'found [0-9]+ extra port/cable connections' "$log" | grep -oE '[0-9]+' | head -1 || true); extra=${extra:-0}   # no 'extra' line = 0; without || true a missing line aborts the step under set -e
               score=$(( missing + extra ))
               echo "cabling check ${d}: ${missing} missing, ${extra} extra of ${total} cables"
               if [ "$score" -eq 0 ]; then QSFP="$label"; break; fi
