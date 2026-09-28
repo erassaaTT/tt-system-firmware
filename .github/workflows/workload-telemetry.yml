@@ -241,6 +241,8 @@ jobs:
             -v "${{ github.workspace }}":/workspace \
             ${{ matrix.config.metal-image }} \
             -c 'rm -rf /workspace/* /workspace/.[!.]* /workspace/..?* || true'
+          # containers a previous job may have left behind (a hung cabling check, an IPMI poller)
+          docker ps -aq --filter name=powerci- | xargs -r docker rm -f >/dev/null 2>&1 || true
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -306,22 +308,25 @@ jobs:
             INLET_C="$(printf '%s\n' "$IPMI_OUT" | awk -F'|' '/TEMP_INLET/ {gsub(/ degrees C/,"",$5); gsub(/ /,"",$5); print $5; exit}')"
             FAN_RPMS="$(printf '%s\n' "$IPMI_OUT" | awk -F'|' '/RPM/ {gsub(/ RPM/,"",$5); gsub(/ /,"",$5); if ($5 ~ /^[0-9]+$/) printf "%s%s", (n++?",":""), $5}')"
           fi
-          # QSFP cabling (Galaxy only). The team defines cabling by which tt-metal cabling descriptor the cluster matches,
-          # so run tt-metal's validator (discovery only, no traffic, no --hard-fail so it exits cleanly and puts the chips
-          # back to idle) against XY+Z, XY and no-QSFP (mesh), parse the missing / extra cable counts, and label the best
-          # match: an exact match by name, otherwise e.g. "XY (9/12 cables)". Logs travel with the artifact.
+          # QSFP cabling (Galaxy only). The team defines cabling by which tt-metal cabling descriptor the cluster matches, so
+          # run tt-metal's validator against XY+Z, XY and no-QSFP (mesh) and parse the missing / extra cable counts it prints.
+          # --hard-fail is REQUIRED: without it the tool enters its link-retrain loop, which never returns on this Galaxy
+          # (a 28 h hang on 2026-09-27). With it the tool aborts right after discovery, so the chips are left busy: the
+          # go-idle step below puts them back. Containers are named and force-removed so a hang cannot outlive its timeout.
           QSFP=""
           if [[ "${{ matrix.config.board }}" == bh-galaxy* ]]; then
             best=""; best_score=999999
             for topo in "xy_torus_z_ports:XY+Z:28" "xy_torus:XY:12" "mesh:none:0"; do
               d="${topo%%:*}"; rest="${topo#*:}"; label="${rest%%:*}"; total="${rest##*:}"
-              log="$ENV_DIR/cabling_check_${d}.txt"
-              timeout --preserve-status 240s docker run --rm --device /dev/tenstorrent -v /dev/hugepages-1G:/dev/hugepages-1G --entrypoint bash \
-                ${{ matrix.config.metal-image }} -c "./build/tools/scaleout/run_cluster_validation --cabling-descriptor-path tools/tests/scaleout/cabling_descriptors/bh_galaxy_${d}.textproto" \
+              log="$ENV_DIR/cabling_check_${d}.txt"; cname="powerci-cabling-${d}"
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              timeout -k 15 --preserve-status 240s docker run --name "$cname" --device /dev/tenstorrent -v /dev/hugepages-1G:/dev/hugepages-1G --entrypoint bash \
+                ${{ matrix.config.metal-image }} -c "./build/tools/scaleout/run_cluster_validation --cabling-descriptor-path tools/tests/scaleout/cabling_descriptors/bh_galaxy_${d}.textproto --hard-fail" \
                 > "$log" 2>&1 || true
+              docker rm -f "$cname" >/dev/null 2>&1 || true
+              grep -q "Physical Discovery Complete" "$log" || { echo "::warning::cabling check ${d}: discovery did not complete (see $(basename "$log"))"; continue; }
               missing=$(grep -oE 'found [0-9]+ missing port/cable connections' "$log" | grep -oE '[0-9]+' | head -1); missing=${missing:-0}
               extra=$(grep -oE 'found [0-9]+ extra port/cable connections' "$log" | grep -oE '[0-9]+' | head -1); extra=${extra:-0}
-              grep -q "Physical Discovery Complete" "$log" || { echo "::warning::cabling check ${d}: validator did not complete (see $(basename "$log"))"; continue; }
               score=$(( missing + extra ))
               echo "cabling check ${d}: ${missing} missing, ${extra} extra of ${total} cables"
               if [ "$score" -eq 0 ]; then QSFP="$label"; break; fi
@@ -332,6 +337,28 @@ jobs:
             done
             [ -n "$QSFP" ] || QSFP="${best:-unknown}"
             echo "QSFP cabling: $QSFP"
+            # The aborted validator leaves every chip at Fmax. Ask the firmware for long idle (what tt-metal sends on
+            # device close: TT_SMC_MSG_AICLK_GO_LONG_IDLE = 0x54) and confirm AICLK is back at the floor.
+            "$VENV_DIR/bin/python" - <<'PY3' || echo "::warning::could not send go-idle after the cabling check"
+          import time, pyluwen
+          chips = [d for d in pyluwen.detect_chips_fallible() if d.have_comms()]
+          sent = 0
+          for d in chips:
+              try:
+                  d.force_upgrade().arc_msg(0x54, wait_for_done=True, use_second_mailbox=False, arg0=0, arg1=0, timeout=2.0); sent += 1
+              except Exception as exc:
+                  print(f"go-idle failed on one chip: {exc}")
+          time.sleep(3)
+          clocks = []
+          for d in chips:
+              try:
+                  clocks.append(d.force_upgrade().as_bh().get_telemetry().aiclk & 0xFFFF)
+              except Exception:
+                  pass
+          print(f"go-idle sent to {sent}/{len(chips)} chips; AICLK now {sorted(set(clocks))} MHz")
+          if clocks and max(clocks) > 900:
+              print("::warning::chips still above the idle floor after go-idle")
+          PY3
           fi
           # model weights present on this runner (what the model workloads can use without a download)
           MODELS_JSON="$(python3 - <<'PY2'
@@ -1040,3 +1067,4 @@ jobs:
         if: ${{ always() }}
         run: |
           rm -rf "${{ github.workspace }}/telemetry_output" "$VENV_DIR" || true
+          docker ps -aq --filter name=powerci- | xargs -r docker rm -f >/dev/null 2>&1 || true
