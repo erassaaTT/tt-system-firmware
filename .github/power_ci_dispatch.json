@@ -6,12 +6,12 @@
   "idle_seconds": "30",
   "cooldown_seconds": "20",
   "system_power": "auto",
-  "tag": "qsfp go-idle check",
+  "tag": "qsfp go-idle check 2",
   "max_util_fpu": "50",
   "max_util_dram": "100",
   "bursty_reps": "1000x",
   "mm_throttle": "auto",
-  "idle_run_seconds": "120",
-  "requested_at": "2026-09-28T20:18:01+00:00",
+  "idle_run_seconds": "240",
+  "requested_at": "2026-09-28T22:21:31+00:00",
   "requested_by": "Ezra Rassaa"
 }
