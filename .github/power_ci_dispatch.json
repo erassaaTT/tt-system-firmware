@@ -6,13 +6,13 @@
   "idle_seconds": "30",
   "cooldown_seconds": "20",
   "system_power": "auto",
-  "tag": "telem interval 10 ms test",
+  "tag": "telem interval 10 ms test 2 (append reader)",
   "max_util_fpu": "50",
   "max_util_dram": "100",
   "bursty_reps": "1000x",
-  "mm_throttle": "auto",
+  "mm_throttle": "off",
   "idle_run_seconds": "60",
   "telem_interval_ms": "10",
-  "requested_at": "2026-10-01T14:21:42+00:00",
+  "requested_at": "2026-10-01T15:20:36+00:00",
   "requested_by": "Ezra Rassaa"
 }
