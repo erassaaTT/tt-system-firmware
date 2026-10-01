@@ -69,9 +69,9 @@ on:
         type: string
         default: "1000x"
       mm_throttle:
-        description: "Matmul throttle TT_MM_THROTTLE_PERF for every subtest: auto (Bursty on Galaxy gets level 5, nothing else), off, or 1-5 (73/67/50/40/33 % of max matmul rate)."
+        description: "Matmul throttle TT_MM_THROTTLE_PERF for every subtest: off, or a level 1-5 (73/67/50/40/33 % of max matmul rate) chosen explicitly; nothing is applied automatically."
         type: string
-        default: "auto"
+        default: "off"
       tag:
         description: Free-text tag recorded in the manifest (e.g. "weekly", "fw 19.15 qual").
         type: string
@@ -147,7 +147,7 @@ jobs:
             echo "max_util_fpu=$(get IN_MAX_UTIL_FPU 50)"   >> $GITHUB_OUTPUT
             echo "max_util_dram=$(get IN_MAX_UTIL_DRAM 100)" >> $GITHUB_OUTPUT
             echo "bursty_reps=$(get IN_BURSTY_REPS 1000x)"   >> $GITHUB_OUTPUT
-            echo "mm_throttle=$(get IN_MM_THROTTLE auto)"     >> $GITHUB_OUTPUT
+            echo "mm_throttle=$(get IN_MM_THROTTLE off)"      >> $GITHUB_OUTPUT
             echo "idle_run_seconds=$(get IN_IDLE_RUN 240)"   >> $GITHUB_OUTPUT
             echo "telem_interval_ms=$(get IN_TELEM_INTERVAL 0)" >> $GITHUB_OUTPUT
             echo "system_power=$(get IN_SYSTEM_POWER auto)" >> $GITHUB_OUTPUT
@@ -223,11 +223,11 @@ jobs:
       POWER_CI_MAX_UTIL_FPU: ${{ needs.gen-config.outputs.max_util_fpu || '50' }}
       POWER_CI_MAX_UTIL_DRAM: ${{ needs.gen-config.outputs.max_util_dram || '100' }}
       POWER_CI_BURSTY_REPS: ${{ needs.gen-config.outputs.bursty_reps || '1000x' }}
-      POWER_CI_MM_THROTTLE: ${{ needs.gen-config.outputs.mm_throttle || 'auto' }}
+      POWER_CI_MM_THROTTLE: ${{ needs.gen-config.outputs.mm_throttle || 'off' }}   # off, or a level 1-5 chosen in the plan; no automatic level
       POWER_CI_IDLE_RUN_SECONDS: ${{ needs.gen-config.outputs.idle_run_seconds || '240' }}
       POWER_CI_TELEM_INTERVAL_MS: ${{ needs.gen-config.outputs.telem_interval_ms || '0' }}   # firmware telemetry refresh interval (scripts/telem_interval.py); 0 = default 100 ms
       POWER_CI_SUBTEST_TIMEOUT_MIN: ${{ needs.gen-config.outputs.subtest_timeout_min || '65' }}
-      # ready-made `docker run` argument: a level 1-5 applies TT_MM_THROTTLE_PERF to every subtest; auto/off leave it empty
+      # ready-made `docker run` argument: a level 1-5 applies TT_MM_THROTTLE_PERF to every subtest; off leaves it empty
       POWER_CI_MM_THROTTLE_ARG: ${{ contains('1 2 3 4 5', needs.gen-config.outputs.mm_throttle) && needs.gen-config.outputs.mm_throttle != '' && format('-e TT_MM_THROTTLE_PERF={0}', needs.gen-config.outputs.mm_throttle) || '' }}
       POWER_CI_SYSTEM_POWER: ${{ needs.gen-config.outputs.system_power || 'auto' }}
       POWER_CI_TAG: ${{ needs.gen-config.outputs.tag || '' }}
@@ -633,7 +633,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
+              ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-1" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
@@ -660,7 +660,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
+              ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-2" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
@@ -687,7 +687,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
+              ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-3" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
@@ -714,7 +714,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
+              ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-4" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
@@ -741,7 +741,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
+              ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-5" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
@@ -768,7 +768,7 @@ jobs:
               -v "$LLAMA_INSTRUCT_DIR:$LLAMA_INSTRUCT_DIR" \
               -e HF_MODEL="$LLAMA_INSTRUCT_DIR" \
               -e TT_CACHE_PATH="$LLAMA_INSTRUCT_DIR" \
-              ${{ env.POWER_CI_MM_THROTTLE_ARG != '' && env.POWER_CI_MM_THROTTLE_ARG || (env.POWER_CI_MM_THROTTLE == 'auto' && startsWith(matrix.config.board, 'bh-galaxy') && '-e TT_MM_THROTTLE_PERF=5' || '') }} \
+              ${{ env.POWER_CI_MM_THROTTLE_ARG }} \
               ${{ matrix.config.metal-image }} \
                 tests/didt/test_duty_cycle.py::test_duty_cycle -k "all and rep-${{ env.POWER_CI_BURSTY_REPS }} and duty-6" \
                 --didt-workload-iterations ${{ env.POWER_CI_ITERATIONS }} --determinism-check-interval 0 --timeout 0
