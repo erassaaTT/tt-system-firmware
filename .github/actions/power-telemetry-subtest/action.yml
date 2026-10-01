@@ -121,11 +121,20 @@ runs:
             echo "::warning::system-power=ipmi requested but /dev/ipmi0 is not present on this runner"
           fi ;;
         esac
+        # Firmware telemetry refresh interval (Power CI knob telem_interval_ms, job env; 0 = firmware default 100 ms).
+        # Set on every chip via the characterization message and clear the DVFS counters, so the capture below can
+        # be judged for DVFS starvation afterwards. Older firmware ignores the message: the run continues at 100 ms.
+        TELEM_MS="${POWER_CI_TELEM_INTERVAL_MS:-0}"; READER_DELAY="0.1"
+        if [ "${TELEM_MS:-0}" -gt 0 ] 2>/dev/null; then
+          "${{ inputs.venv-dir }}/bin/python3" "$GITHUB_WORKSPACE/scripts/telem_interval.py" set "$TELEM_MS" --clear-counters --out telem_interval_set.json || true
+          READER_DELAY="$(python3 -c "print(max(0.002, $TELEM_MS / 2000))")"   # poll twice per firmware refresh
+        fi
         # The runner user already has access to /dev/tenstorrent (same access other
         # workflows use via pyluwen), so no sudo is required.
         nohup "${{ inputs.venv-dir }}/bin/python3" \
           "$GITHUB_WORKSPACE/scripts/read_telemetry.py" \
           --csv telemetry \
+          --delay "$READER_DELAY" \
           --workload "${{ inputs.workload }}" \
           > telemetry.log 2>&1 < /dev/null &
         TELEM_PID=$!
@@ -214,6 +223,13 @@ runs:
           echo "No running telemetry process found."
         fi
 
+        # Telemetry interval knob: read the DVFS counters accumulated during the capture, then restore the
+        # firmware default so the runner is never left at a short interval.
+        TELEM_MS="${POWER_CI_TELEM_INTERVAL_MS:-0}"
+        if [ "${TELEM_MS:-0}" -gt 0 ] 2>/dev/null; then
+          "${{ inputs.venv-dir }}/bin/python3" "$GITHUB_WORKSPACE/scripts/telem_interval.py" restore --read-counters --out "$TELEM_DIR/telem_interval_restore.json" || true
+        fi
+
         # Stop the IPMI poller (SIGTERM → it flushes the CSV and exits; the container removes itself).
         if docker ps -q -f "name=powerci-ipmi-${{ inputs.name }}" | grep -q .; then
           docker stop -t 20 "powerci-ipmi-${{ inputs.name }}" >/dev/null || true
@@ -227,6 +243,22 @@ runs:
         RC="$(cat "$TELEM_DIR/workload_exit_code" 2>/dev/null || echo 124)"
         STATUS="failed"; [ "$RC" = "0" ] && STATUS="passed"
         CMD_JSON="$(python3 -c 'import json,sys; print(json.dumps(open(sys.argv[1]).read().strip()))' "$TELEM_DIR/command.sh" 2>/dev/null || echo '""')"
+        # telem_interval_ms knob + DVFS counters -> manifest (null when the knob was off or the firmware ignored it)
+        TELEM_JSON="$(python3 - "$TELEM_DIR" "${POWER_CI_TELEM_INTERVAL_MS:-0}" <<'PY'
+        import json, os, sys
+        d, req = sys.argv[1], int(sys.argv[2] or 0)
+        def load(n):
+            try: return json.load(open(os.path.join(d, n)))
+            except Exception: return {}
+        s, r = load("telem_interval_set.json"), load("telem_interval_restore.json")
+        c = r.get("counters_max") or {}
+        out = {"telem_interval_ms": req or 0, "telem_interval_applied": bool(s.get("applied")) if req else None,
+               "telem_interval_fw": next((v.get("fw_bundle") for v in (s.get("per_chip") or {}).values() if v.get("fw_bundle")), None)}
+        for k in ("dvfs_dropped_ticks", "dvfs_max_period_us", "dvfs_max_pass_us"):
+            out[k] = c.get(k)
+        print(",\n".join(f'  "{k}": {json.dumps(v)}' for k, v in out.items()))
+        PY
+        )"
         cat > "$TELEM_DIR/manifest.json" <<MANIFEST
         {
           "schema": "power-ci-manifest/1",
@@ -245,7 +277,8 @@ runs:
           "command": $CMD_JSON,
           "run_id": "${GITHUB_RUN_ID}",
           "run_url": "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}",
-          "fw_repo_sha": "${GITHUB_SHA}"
+          "fw_repo_sha": "${GITHUB_SHA}",
+        $TELEM_JSON
         }
         MANIFEST
         rm -f "$TELEM_DIR"/telemetry_started_at "$TELEM_DIR"/workload_started_at "$TELEM_DIR"/workload_ended_at "$TELEM_DIR"/workload_exit_code "$TELEM_DIR"/telemetry.pid

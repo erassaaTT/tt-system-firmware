@@ -67,7 +67,7 @@ def extract_top_gddr(value, controller_id):
 # Telemetry tag ids from tt-system-firmware include/tenstorrent/telemetry_tags.h (the ids, not the table positions).
 # AICLK_ARB_MAX = arb_max_freq | (arbiter << 16); arbiter 0 fmax, 1 tdp, 2 fast_tdc, 3 tdc, 4 thm, 5 board_power,
 # 6 voltage, 7 gddr_thm, 8 doppler_slow, 9 doppler_critical, 10 host_fmax.
-ARB_TAGS = {"AICLK_ARB_MIN": 65, "AICLK_ARB_MAX": 66, "KERNEL_THROTTLER": 75}
+ARB_TAGS = {"AICLK_ARB_MIN": 65, "AICLK_ARB_MAX": 66, "KERNEL_THROTTLER": 75, "UPDATE_TELEM_SPEED": 5}  # tag 5 = firmware telemetry refresh interval, ms
 
 
 class ArbReader:
@@ -213,6 +213,7 @@ def get_telemetry(telem_dicts, workload: str = "") -> dict:
         telem["AICLK_ARB_MIN_ID"] = arb.get("AICLK_ARB_MIN", -1) >> 16 if arb.get("AICLK_ARB_MIN", -1) >= 0 else -1
         telem["AICLK_ARB_MIN_MHZ"] = arb.get("AICLK_ARB_MIN", -1) & 0xFFFF if arb.get("AICLK_ARB_MIN", -1) >= 0 else -1
         telem["KERNEL_THROTTLER"] = arb.get("KERNEL_THROTTLER", -1)
+        telem["UPDATE_TELEM_SPEED"] = arb.get("UPDATE_TELEM_SPEED", -1)  # ms between firmware telemetry refreshes (100 default; Power CI telem_interval_ms)
 
         for key, value in gddr_controller_temperature_map.items():
             telem[f"GDDR{key}_TEMP_BOTTOM"] = (

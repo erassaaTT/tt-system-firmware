@@ -99,6 +99,7 @@ jobs:
       bursty_reps: ${{ steps.params.outputs.bursty_reps }}
       mm_throttle: ${{ steps.params.outputs.mm_throttle }}
       idle_run_seconds: ${{ steps.params.outputs.idle_run_seconds }}
+      telem_interval_ms: ${{ steps.params.outputs.telem_interval_ms }}
       subtest_timeout_min: ${{ steps.timeout.outputs.minutes }}
       system_power: ${{ steps.params.outputs.system_power }}
       tag: ${{ steps.params.outputs.tag }}
@@ -120,6 +121,7 @@ jobs:
           IN_BURSTY_REPS: ${{ inputs.bursty_reps }}
           IN_MM_THROTTLE: ${{ inputs.mm_throttle }}
           IN_IDLE_RUN: "240"   # idle-mode capture length; JSON-only knob (workflow_dispatch is at GitHub's 10-input limit)
+          IN_TELEM_INTERVAL: "0"   # firmware telemetry refresh interval, ms (0 = default 100); JSON-only knob, same reason
           IN_SYSTEM_POWER: auto   # no dispatch input any more (GitHub allows 10); the PR path may still carry system_power in the JSON
           IN_TAG: ${{ inputs.tag }}
           PR_ACTION: ${{ github.event.action }}
@@ -147,6 +149,7 @@ jobs:
             echo "bursty_reps=$(get IN_BURSTY_REPS 1000x)"   >> $GITHUB_OUTPUT
             echo "mm_throttle=$(get IN_MM_THROTTLE auto)"     >> $GITHUB_OUTPUT
             echo "idle_run_seconds=$(get IN_IDLE_RUN 240)"   >> $GITHUB_OUTPUT
+            echo "telem_interval_ms=$(get IN_TELEM_INTERVAL 0)" >> $GITHUB_OUTPUT
             echo "system_power=$(get IN_SYSTEM_POWER auto)" >> $GITHUB_OUTPUT
             echo "tag=$(get IN_TAG '')"                   >> $GITHUB_OUTPUT
             echo "requested_by=${{ github.actor }}"       >> $GITHUB_OUTPUT
@@ -163,7 +166,7 @@ jobs:
             else
               echo "PR event '$PR_ACTION' is not a run request"
             fi
-            for k in boards workloads iterations idle_seconds cooldown_seconds max_util_fpu max_util_dram bursty_reps mm_throttle idle_run_seconds system_power tag requested_by; do
+            for k in boards workloads iterations idle_seconds cooldown_seconds max_util_fpu max_util_dram bursty_reps mm_throttle idle_run_seconds telem_interval_ms system_power tag requested_by; do
               echo "$k=$(jq -r --arg k "$k" '.[$k] // ""' "$FILE")" >> $GITHUB_OUTPUT
             done
           fi
@@ -222,6 +225,7 @@ jobs:
       POWER_CI_BURSTY_REPS: ${{ needs.gen-config.outputs.bursty_reps || '1000x' }}
       POWER_CI_MM_THROTTLE: ${{ needs.gen-config.outputs.mm_throttle || 'auto' }}
       POWER_CI_IDLE_RUN_SECONDS: ${{ needs.gen-config.outputs.idle_run_seconds || '240' }}
+      POWER_CI_TELEM_INTERVAL_MS: ${{ needs.gen-config.outputs.telem_interval_ms || '0' }}   # firmware telemetry refresh interval (scripts/telem_interval.py); 0 = default 100 ms
       POWER_CI_SUBTEST_TIMEOUT_MIN: ${{ needs.gen-config.outputs.subtest_timeout_min || '65' }}
       # ready-made `docker run` argument: a level 1-5 applies TT_MM_THROTTLE_PERF to every subtest; auto/off leave it empty
       POWER_CI_MM_THROTTLE_ARG: ${{ contains('1 2 3 4 5', needs.gen-config.outputs.mm_throttle) && needs.gen-config.outputs.mm_throttle != '' && format('-e TT_MM_THROTTLE_PERF={0}', needs.gen-config.outputs.mm_throttle) || '' }}
@@ -1068,5 +1072,9 @@ jobs:
       - name: Cleanup
         if: ${{ always() }}
         run: |
+          # a killed job must not leave the runner's firmware at a short telemetry interval
+          if [ "${POWER_CI_TELEM_INTERVAL_MS:-0}" -gt 0 ] 2>/dev/null && [ -x "$VENV_DIR/bin/python3" ]; then
+            "$VENV_DIR/bin/python3" "${{ github.workspace }}/scripts/telem_interval.py" restore >/dev/null 2>&1 || true
+          fi
           rm -rf "${{ github.workspace }}/telemetry_output" "$VENV_DIR" || true
           docker ps -aq --filter name=powerci- | xargs -r docker rm -f >/dev/null 2>&1 || true
