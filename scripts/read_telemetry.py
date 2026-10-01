@@ -3,9 +3,11 @@
 
 # Pretty much just rip out the telemetry code out of tt-smi and format it into a csv
 import os
+import csv
 import time
 import signal
 import argparse
+from datetime import datetime
 import pandas as pd
 
 import pyluwen
@@ -129,7 +131,7 @@ def get_telemetry(telem_dicts, workload: str = "") -> dict:
         pci_index = int(map.get("_PCI", hex(list_index)), 16)
 
         # Timestamp
-        telem["TIMESTAMP"] = time.ctime()
+        telem["TIMESTAMP"] = datetime.now().isoformat(sep=" ", timespec="milliseconds")  # ms resolution; ctime() only had seconds
 
         # Workload label (free-form string supplied by the caller)
         telem["WORKLOAD"] = workload
@@ -231,6 +233,44 @@ def get_telemetry(telem_dicts, workload: str = "") -> dict:
     return results
 
 
+_CSV_WRITERS: dict = {}  # csv path -> (file handle, DictWriter); header written once, rows appended
+
+
+def append_rows(telems, csv_prefix: str, csv_name: str | None = None) -> set:
+    """Append each telemetry dict to <csv_prefix>_<BOARD_ID>.csv (or csv_name). Returns the files written."""
+    written = set()
+    for telem in telems:
+        name = csv_name or f"{csv_prefix}_{telem['BOARD_ID']}.csv"
+        entry = _CSV_WRITERS.get(name)
+        if entry is None:
+            fieldnames = list(telem.keys())
+            if os.path.exists(name) and os.path.getsize(name) > 0:
+                with open(name, newline="") as f:
+                    header = next(csv.reader(f), None)
+                fieldnames = header or fieldnames
+                fh = open(name, "a", newline="")
+                writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore", restval=-1)
+            else:
+                fh = open(name, "w", newline="")
+                writer = csv.DictWriter(fh, fieldnames=fieldnames, extrasaction="ignore", restval=-1)
+                writer.writeheader()
+            entry = _CSV_WRITERS[name] = (fh, writer)
+        fh, writer = entry
+        writer.writerow(telem)
+        fh.flush()  # the CI action copies the CSVs right after SIGINT; nothing may sit in a buffer
+        written.add(name)
+    return written
+
+
+def close_csvs() -> None:
+    for fh, _ in _CSV_WRITERS.values():
+        try:
+            fh.close()
+        except Exception:
+            pass
+    _CSV_WRITERS.clear()
+
+
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Read telemetry from Tenstorrent chips", allow_abbrev=False
@@ -304,49 +344,19 @@ if __name__ == "__main__":
                 telem_dicts.append(temp_dict)
             telems = get_telemetry(telem_dicts, workload=args.workload)
 
-            # Format into a csv
-            matching_csvs = [f for f in os.listdir() if f.startswith(args.csv)]
-            for i, telem in enumerate(telems):
-                new_row = pd.DataFrame([telem])
-                csv_name = args.csv + "_" + str(telem["BOARD_ID"]) + ".csv"
-                if os.path.exists(csv_name):
-                    test_log = pd.read_csv(csv_name)
-                    test_log = pd.concat([test_log, new_row], ignore_index=True)
-                    if csv_name in matching_csvs:
-                        matching_csvs.remove(csv_name)
-                else:
-                    test_log = new_row
-                test_log.to_csv(csv_name, index=False)
-
+            # Append one row per chip. (The previous version re-read, concatenated and rewrote the whole CSV with
+            # pandas on every sample: O(file size) per loop, so a Galaxy capture slowed from ~4 Hz to one row every
+            # 22 s over a 35 h run. Appending keeps the loop time flat.)
+            written = append_rows(telems, args.csv)
             if args.pad:
-                for csv in matching_csvs:
-                    test_log = pd.read_csv(csv)
-                    test_log = pd.concat(
-                        [
-                            test_log,
-                            pd.DataFrame(
-                                [
-                                    {
-                                        "TIMESTAMP": time.ctime(),
-                                        "WORKLOAD": args.workload,
-                                        "PCI_INDEX": -1,
-                                        "BOARD_ID": -1,
-                                        "VCORE": -1,
-                                        "TDC": -1,
-                                        "TDP": -1,
-                                        "INPUT_POWER": -1,
-                                        "ASIC_TEMP": -1,
-                                        "AICLK": -1,
-                                    }
-                                ]
-                            ),
-                        ],
-                        ignore_index=True,
-                    )
-                    test_log.to_csv(csv, index=False)
+                for csv_name in [f for f in os.listdir() if f.startswith(args.csv) and f.endswith(".csv") and f not in written]:
+                    append_rows([{"TIMESTAMP": datetime.now().isoformat(sep=" ", timespec="milliseconds"), "WORKLOAD": args.workload,
+                                  "PCI_INDEX": -1, "BOARD_ID": -1, "VCORE": -1, "TDC": -1, "TDP": -1, "INPUT_POWER": -1,
+                                  "ASIC_TEMP": -1, "AICLK": -1}], args.csv, csv_name=csv_name)
 
             if interrupt_flag:
                 print("\nKeyboard interrupt detected")
+                close_csvs()
                 if args.vf:
                     if not os.path.exists("vf_pending_upload"):
                         os.makedirs("vf_pending_upload")
@@ -370,4 +380,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"Exception caught: {e}")
 
+    close_csvs()
     print("Stopping telemetry collection")

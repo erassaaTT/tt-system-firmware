@@ -32,7 +32,7 @@ COUNTER_CMD_GET, COUNTER_CMD_CLEAR = 0, 1
 COUNTER_BANK_DVFS = 1
 DVFS_COUNTERS = {"dvfs_dropped_ticks": 0, "dvfs_max_period_us": 1, "dvfs_max_pass_us": 2}
 TAG_UPDATE_TELEM_SPEED = 5
-TAG_FW_BUNDLE_VERSION = 3
+TAG_FW_BUNDLE_VERSION = 28  # FlashBundleVersion in luwen telemetry_tags.rs
 
 
 def _chips():
