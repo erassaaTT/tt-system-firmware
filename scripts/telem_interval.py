@@ -117,14 +117,22 @@ def main() -> int:
     for pci, chip in chips.items():
         rec: dict = {"fw_bundle": fw_version(chip), "before_ms": _read_tag(chip, TAG_UPDATE_TELEM_SPEED)}
         try:
+            # counters (fw >= 19.16) are handled separately from the interval setter (fw >= 19.15): a firmware that
+            # knows the setter but not the counter message must still get the interval applied
             if args.cmd == "set":
                 if args.clear_counters:
-                    counter_clear(chip)
+                    try:
+                        counter_clear(chip)
+                    except Exception as exc:  # noqa: BLE001
+                        rec["counters_error"] = str(exc)[:120]
                 resp = set_interval(chip, args.ms)
                 rec["response"] = [int(x) for x in resp] if resp else None
             elif args.cmd == "restore":
                 if args.read_counters:
-                    rec["counters"] = {name: counter_get(chip, idx) for name, idx in DVFS_COUNTERS.items()}
+                    try:
+                        rec["counters"] = {name: counter_get(chip, idx) for name, idx in DVFS_COUNTERS.items()}
+                    except Exception as exc:  # noqa: BLE001
+                        rec["counters_error"] = str(exc)[:120]
                 resp = set_interval(chip, 0)
                 rec["response"] = [int(x) for x in resp] if resp else None
             else:

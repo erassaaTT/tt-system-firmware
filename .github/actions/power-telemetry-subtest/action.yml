@@ -127,7 +127,13 @@ runs:
         TELEM_MS="${POWER_CI_TELEM_INTERVAL_MS:-0}"; READER_DELAY="0.1"
         if [ "${TELEM_MS:-0}" -gt 0 ] 2>/dev/null; then
           "${{ inputs.venv-dir }}/bin/python3" "$GITHUB_WORKSPACE/scripts/telem_interval.py" set "$TELEM_MS" --clear-counters --out telem_interval_set.json || true
-          READER_DELAY="$(python3 -c "print(max(0.002, $TELEM_MS / 2000))")"   # poll twice per firmware refresh
+          # poll twice per firmware refresh, but only if the firmware actually took the interval; otherwise a 19.5
+          # board would be read 16x per 100 ms refresh for nothing (p150a check, dispatch 35)
+          if python3 -c "import json,sys; sys.exit(0 if json.load(open('telem_interval_set.json')).get('applied') else 1)" 2>/dev/null; then
+            READER_DELAY="$(python3 -c "print(max(0.002, $TELEM_MS / 2000))")"
+          else
+            echo "::warning::telem_interval_ms=$TELEM_MS not applied by the firmware on this runner; capturing at the default 100 ms"
+          fi
         fi
         # The runner user already has access to /dev/tenstorrent (same access other
         # workflows use via pyluwen), so no sudo is required.
