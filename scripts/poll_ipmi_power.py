@@ -51,7 +51,12 @@ def sdr_list(timeout: float) -> str:
     if STOP:
         return ""
     try:
-        _CHILD = subprocess.Popen(["ipmitool", "sdr", "list"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+        _CHILD = subprocess.Popen(
+            ["ipmitool", "sdr", "list"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
         try:
             out, _ = _CHILD.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -69,7 +74,12 @@ def sdr_list(timeout: float) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(allow_abbrev=False, description="Poll IPMI Power_* sensors to CSV")
     ap.add_argument("--out", default="ipmi_power.csv")
-    ap.add_argument("--interval", type=float, default=2.0, help="seconds between polls (one SDR walk takes a few seconds on Galaxy)")
+    ap.add_argument(
+        "--interval",
+        type=float,
+        default=2.0,
+        help="seconds between polls (one SDR walk takes a few seconds on Galaxy)",
+    )
     ap.add_argument("--prefix", default="Power_", help="sensor name prefix to keep")
     ap.add_argument("--timeout", type=float, default=30.0, help="ipmitool timeout per poll")
     args = ap.parse_args()
@@ -84,13 +94,24 @@ def main() -> int:
             values = parse_rows(sdr_list(args.timeout), args.prefix)
             if values:
                 if writer is None:
-                    writer = csv.DictWriter(fh, fieldnames=["Timestamp", *sorted(values)], extrasaction="ignore")
+                    writer = csv.DictWriter(
+                        fh, fieldnames=["Timestamp", *sorted(values)], extrasaction="ignore"
+                    )
                     writer.writeheader()
-                writer.writerow({"Timestamp": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), **values})
+                writer.writerow(
+                    {
+                        "Timestamp": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
+                        **values,
+                    }
+                )
                 fh.flush()
                 rows += 1
             elif rows == 0 and not STOP:
-                print("no Power_* sensors yet (is /dev/ipmi0 available and ipmitool installed?)", file=sys.stderr, flush=True)
+                print(
+                    "no Power_* sensors yet (is /dev/ipmi0 available and ipmitool installed?)",
+                    file=sys.stderr,
+                    flush=True,
+                )
             end = t0 + args.interval
             while not STOP and time.monotonic() < end:
                 time.sleep(0.2)

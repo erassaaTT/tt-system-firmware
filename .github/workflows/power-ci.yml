@@ -52,7 +52,7 @@ on:
         type: string
         default: ""
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]   # runs only while the power-ci label is on the PR (should-run)
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
@@ -68,7 +68,7 @@ jobs:
   should-run:
     if: >
       vars.POWER_CI_ENABLED != 'false' &&
-      (github.event_name != 'pull_request' || github.event.label.name == 'power-ci')
+      (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'power-ci'))
     runs-on: ubuntu-24.04
     outputs:
       firmware: ${{ steps.params.outputs.firmware }}
@@ -174,7 +174,7 @@ jobs:
           esac
           MATRIX="$(jq -c --arg boards "$BOARDS" --arg tag "$TAG" '
             [.bh[] | select(has("power-ci-label"))
-                   | select($boards == "all" or (($boards | split(",") | map(gsub(" "; ""))) | index(.board)))
+                   | .board as $b | select($boards == "all" or (($boards | split(",") | map(gsub(" "; ""))) | index($b)))
                    | if $tag != "" then .["metal-image"] |= sub(":[^:/]*$"; ":" + $tag) else . end]' .github/ci_boards.json)"
           [ "$MATRIX" != "[]" ] || { echo "::error::no board matched '$BOARDS'"; exit 1; }
           echo "matrix=$MATRIX" | tee -a "$GITHUB_OUTPUT"
@@ -613,11 +613,13 @@ jobs:
               for _ in $(seq 1 45); do [ "$(wc -l < "$d/ipmi_power.csv" 2>/dev/null || echo 0)" -ge 2 ] && break; sleep 1; done
             fi
             started=$(date -u +%FT%TZ)
-            (cd "$d" && nohup "$VENV/bin/python3" "$SCRIPTS/read_telemetry.py" --csv telemetry --workload "$wl" \
-                --interval-ms "$POWER_CI_TELEM_INTERVAL_MS" --report telemetry_report.json >telemetry.log 2>&1 </dev/null & echo $! > telemetry.pid)
+            nohup "$VENV/bin/python3" "$SCRIPTS/read_telemetry.py" --csv "$d/telemetry" --workload "$wl" \
+                --interval-ms "$POWER_CI_TELEM_INTERVAL_MS" --report "$d/telemetry_report.json" >"$d/telemetry.log" 2>&1 </dev/null &
+            echo $! > "$d/telemetry.pid"
             sleep 5
             if ! kill -0 "$(cat "$d/telemetry.pid")" 2>/dev/null; then
               echo "::error::$wl: telemetry reader did not start"; cat "$d/telemetry.log"
+              stop_reader "$d/ipmi.pid" TERM 20 || true
               FAILED+=("$wl"); SUMMARY+=("| $wl | failed | - | telemetry reader did not start |"); echo "::endgroup::"; return
             fi
             [ "$IDLE" -gt 0 ] && sleep "$IDLE"
@@ -640,21 +642,22 @@ jobs:
               { head -c $((5 * 1024 * 1024)) "$d/workload.log"; printf '\n\n... middle of the log dropped before upload ...\n\n'; tail -c $((20 * 1024 * 1024)) "$d/workload.log"; } > "$d/workload.log.trim"
               mv "$d/workload.log.trim" "$d/workload.log"
             fi
-            gzip -6 "$d"/telemetry_*.csv 2>/dev/null || true
+            gzip -6 "$d"/*.csv 2>/dev/null || true
             rm -f "$d"/*.pid
             echo "::endgroup::"
           }
 
+          ALL="idle,mission_mode,resnet_conv,ff1_matmul_with_gelu,ff1_matmul_no_gelu,lm_head,bursty1,bursty2,bursty3,bursty4,bursty5,bursty6,minimal_matmul,sdpa_op,binary_mul,mla_sdpa,deepseek_v3_mla_matmul,deepseek_v3_gate_matmul,max_util,max_util_fpu100_dram100,llama_8b_demo,tt_burnin_no_reset,tt_burnin"
           if [ "$POWER_CI_WORKLOADS" = validate ]; then
             rc=0
-            for wl in idle mission_mode resnet_conv ff1_matmul_with_gelu ff1_matmul_no_gelu lm_head bursty1 bursty5 minimal_matmul sdpa_op binary_mul mla_sdpa deepseek_v3_mla_matmul deepseek_v3_gate_matmul max_util llama_8b_demo tt_burnin; do
+            for wl in ${ALL//,/ }; do
               define "$wl"
               if check; then echo "OK   $wl"; else echo "::error::$wl: $CHECK_NOTE"; rc=1; fi
             done
             exit $rc
           fi
           WORKLOADS="$POWER_CI_WORKLOADS"
-          [ "$WORKLOADS" = all ] && WORKLOADS="idle,mission_mode,resnet_conv,ff1_matmul_with_gelu,ff1_matmul_no_gelu,lm_head,bursty1,bursty2,bursty3,bursty4,bursty5,bursty6,minimal_matmul,sdpa_op,binary_mul,mla_sdpa,deepseek_v3_mla_matmul,deepseek_v3_gate_matmul,max_util,max_util_fpu100_dram100,llama_8b_demo,tt_burnin_no_reset,tt_burnin"
+          [ "$WORKLOADS" = all ] && WORKLOADS="$ALL"
           for wl in ${WORKLOADS//,/ }; do run_workload "$wl"; done
           {
             echo "## Power CI on $BOARD"; echo; echo "| workload | status | duration | note |"; echo "|---|---|---|---|"

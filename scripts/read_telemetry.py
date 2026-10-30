@@ -23,16 +23,29 @@ import json
 import signal
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pyluwen
 
-GDDR_TEMP_TAGS = {0: "GDDR01_TEMP", 1: "GDDR01_TEMP", 2: "GDDR23_TEMP", 3: "GDDR23_TEMP",
-                  4: "GDDR45_TEMP", 5: "GDDR45_TEMP", 6: "GDDR67_TEMP", 7: "GDDR67_TEMP"}
+GDDR_TEMP_TAGS = {
+    0: "GDDR01_TEMP",
+    1: "GDDR01_TEMP",
+    2: "GDDR23_TEMP",
+    3: "GDDR23_TEMP",
+    4: "GDDR45_TEMP",
+    5: "GDDR45_TEMP",
+    6: "GDDR67_TEMP",
+    7: "GDDR67_TEMP",
+}
 INVALID_FLOAT_TELEMETRY = 0x80000000  # firmware ConvertFloatToTelemetry(): not a valid float
 
 # Telemetry tag ids (include/tenstorrent/telemetry_tags.h). AICLK_ARB_MAX = arb_max_freq | (arbiter << 16).
-ARB_TAGS = {"AICLK_ARB_MIN": 65, "AICLK_ARB_MAX": 66, "KERNEL_THROTTLER": 75, "UPDATE_TELEM_SPEED": 5}
+ARB_TAGS = {
+    "AICLK_ARB_MIN": 65,
+    "AICLK_ARB_MAX": 66,
+    "KERNEL_THROTTLER": 75,
+    "UPDATE_TELEM_SPEED": 5,
+}
 TAG_UPDATE_TELEM_SPEED = 5
 TAG_FW_BUNDLE_VERSION = 28
 
@@ -65,6 +78,7 @@ def signed_16_16(value: int) -> float:
 
 
 # ---------------------------------------------------------------- telemetry table access (read-only AXI)
+
 
 def telemetry_table(chip) -> tuple[int, int, int] | None:
     """(table base, entry count, data base) of the firmware telemetry table: tag table at ARC SCRATCH_RAM[13]
@@ -113,7 +127,10 @@ class ArbReader:
                 self.chips[pci] = chip
             except Exception as exc:  # noqa: BLE001
                 print(f"arbiter tags unavailable on pci:{pci} ({exc})", flush=True)
-        print(f"arbiter tags on {len(self.addrs)} device(s): {sorted({n for a in self.addrs.values() for n in a})}", flush=True)
+        print(
+            f"arbiter tags on {len(self.addrs)} device(s): {sorted({n for a in self.addrs.values() for n in a})}",
+            flush=True,
+        )
 
     def read(self, pci: int) -> dict[str, int]:
         addrs = self.addrs.get(pci)
@@ -129,6 +146,7 @@ class ArbReader:
 
 # ---------------------------------------------------------------- telemetry interval knob and DVFS counters
 
+
 def arc_msg(chip, words: list[int], timeout: int = 1000):
     """One 8-word ARC request; response word 0 nonzero = rejected or unknown (tt_shell.c makes the same check)."""
     resp = chip.arc_msg_buf((words + [0] * 8)[:8], timeout=timeout)
@@ -142,7 +160,9 @@ def set_interval(chip, ms: int):
 
 
 def counter_get(chip, index: int) -> int | None:
-    resp = arc_msg(chip, [MSG_COUNTER, COUNTER_CMD_GET | (COUNTER_BANK_DVFS << 8) | (index << 16), 0])
+    resp = arc_msg(
+        chip, [MSG_COUNTER, COUNTER_CMD_GET | (COUNTER_BANK_DVFS << 8) | (index << 16), 0]
+    )
     return int(resp[2]) if resp else None
 
 
@@ -152,7 +172,9 @@ def counter_clear(chip, mask: int = 0x7):
 
 def fw_version(chip) -> str | None:
     v = read_tag(chip, TAG_FW_BUNDLE_VERSION)
-    return None if v is None else f"{(v >> 24) & 0xFF}.{(v >> 16) & 0xFF}.{(v >> 8) & 0xFF}.{v & 0xFF}"
+    return (
+        None if v is None else f"{(v >> 24) & 0xFF}.{(v >> 16) & 0xFF}.{(v >> 8) & 0xFF}.{v & 0xFF}"
+    )
 
 
 def apply_interval(bh_chips: dict, ms: int, clear_counters: bool) -> dict:
@@ -160,7 +182,10 @@ def apply_interval(bh_chips: dict, ms: int, clear_counters: bool) -> dict:
     wanted = ms or DEFAULT_INTERVAL_MS
     per_chip, applied = {}, 0
     for pci, chip in bh_chips.items():
-        rec: dict = {"fw_bundle": fw_version(chip), "before_ms": read_tag(chip, TAG_UPDATE_TELEM_SPEED)}
+        rec: dict = {
+            "fw_bundle": fw_version(chip),
+            "before_ms": read_tag(chip, TAG_UPDATE_TELEM_SPEED),
+        }
         if clear_counters:
             try:
                 counter_clear(chip)
@@ -174,8 +199,13 @@ def apply_interval(bh_chips: dict, ms: int, clear_counters: bool) -> dict:
         rec["after_ms"] = read_tag(chip, TAG_UPDATE_TELEM_SPEED)
         applied += rec["after_ms"] == wanted
         per_chip[str(pci)] = rec
-    return {"requested_ms": ms, "applied": bool(bh_chips) and applied == len(bh_chips), "applied_chips": applied,
-            "chips": len(bh_chips), "per_chip": per_chip}
+    return {
+        "requested_ms": ms,
+        "applied": bool(bh_chips) and applied == len(bh_chips),
+        "applied_chips": applied,
+        "chips": len(bh_chips),
+        "per_chip": per_chip,
+    }
 
 
 def read_counters(bh_chips: dict) -> dict[str, int]:
@@ -194,6 +224,7 @@ def read_counters(bh_chips: dict) -> dict[str, int]:
 
 # ---------------------------------------------------------------- one telemetry sample -> CSV row
 
+
 def chip_row(raw: dict, pci: int, workload: str, arb: dict) -> dict:
     def hexval(name, default=None):
         v = raw.get(name)
@@ -208,15 +239,17 @@ def chip_row(raw: dict, pci: int, workload: str, arb: dict) -> dict:
         return -1 if v in (None, 0, 0xFFFFFFFF, INVALID_FLOAT_TELEMETRY) else signed_16_16(v)
 
     row = {
-        "TIMESTAMP": datetime.now(timezone.utc).isoformat(sep=" ", timespec="milliseconds"),
+        "TIMESTAMP": datetime.now(UTC).isoformat(sep=" ", timespec="milliseconds"),
         "WORKLOAD": workload,
         "PCI_INDEX": pci,  # on Galaxy every chip reports the same BOARD_ID; this tells the 32 chips apart
-        "BOARD_ID": hexval("BOARD_ID", -1),
+        "BOARD_ID": raw.get("BOARD_ID", "-1"),  # hex string, as in every earlier capture
         "VCORE": hexval("VCORE", -1000) / 1000,
         "TDC": hexval("TDC", -1) & 0xFFFF if raw.get("TDC") is not None else -1,
         "TDP": hexval("TDP") & 0xFFFF if raw.get("TDP") is not None else -1,
         "INPUT_POWER": hexval("INPUT_POWER") & 0xFFFF if raw.get("INPUT_POWER") is not None else -1,
-        "ASIC_TEMP": signed_16_16(hexval("ASIC_TEMPERATURE")) if raw.get("ASIC_TEMPERATURE") is not None else -1,
+        "ASIC_TEMP": signed_16_16(hexval("ASIC_TEMPERATURE"))
+        if raw.get("ASIC_TEMPERATURE") is not None
+        else -1,
         "AICLK": hexval("AICLK") & 0xFFFF if raw.get("AICLK") is not None else -1,
         "THERM_TRIP_COUNT": avail("THERM_TRIP_COUNT") & 0xFFFF,
         "TIMER_HEARTBEAT": avail("TIMER_HEARTBEAT"),
@@ -227,7 +260,13 @@ def chip_row(raw: dict, pci: int, workload: str, arb: dict) -> dict:
     row["GDDR_UNCORR_ERRS"] = avail("GDDR_UNCORR_ERRS")
     row["VREG_TEMP"] = temp("VREG_TEMPERATURE")
     row["BOARD_TEMP"] = temp("BOARD_TEMPERATURE")
-    for name in ("FAN_RPM", "TDP_LIMIT_MAX", "TDC_LIMIT_MAX", "AICLK_LIMIT_MAX", "THM_LIMIT_THROTTLE"):
+    for name in (
+        "FAN_RPM",
+        "TDP_LIMIT_MAX",
+        "TDC_LIMIT_MAX",
+        "AICLK_LIMIT_MAX",
+        "THM_LIMIT_THROTTLE",
+    ):
         row[name] = avail(name, -1)
     amax, amin = arb.get("AICLK_ARB_MAX", -1), arb.get("AICLK_ARB_MIN", -1)
     row["AICLK_ARB_MAX_ID"] = amax >> 16 if amax >= 0 else -1
@@ -259,7 +298,9 @@ class CsvSink:
         entry = self.files.get(name)
         if entry is None:
             fh = open(name, "a", newline="")
-            writer = csv.DictWriter(fh, fieldnames=list(row.keys()), extrasaction="ignore", restval=-1)
+            writer = csv.DictWriter(
+                fh, fieldnames=list(row.keys()), extrasaction="ignore", restval=-1
+            )
             if fh.tell() == 0:
                 writer.writeheader()
             entry = self.files[name] = (fh, writer)
@@ -297,24 +338,44 @@ def write_report(path: str, report: dict) -> None:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Read Blackhole chip telemetry to CSV", allow_abbrev=False)
+    ap = argparse.ArgumentParser(
+        description="Read Blackhole chip telemetry to CSV", allow_abbrev=False
+    )
     ap.add_argument("--csv", default="telemetry", help="CSV name prefix")
-    ap.add_argument("--delay", type=float, default=None, help="seconds between samples (default: half the firmware interval)")
+    ap.add_argument(
+        "--delay",
+        type=float,
+        default=None,
+        help="seconds between samples (default: half the firmware interval)",
+    )
     ap.add_argument("--workload", default="", help="label stamped onto every row")
-    ap.add_argument("--interval-ms", type=int, default=0, help="firmware telemetry interval for the capture (0 = leave the default)")
+    ap.add_argument(
+        "--interval-ms",
+        type=int,
+        default=0,
+        help="firmware telemetry interval for the capture (0 = leave the default)",
+    )
     ap.add_argument("--report", default="", help="JSON report written when the capture stops")
     ap.add_argument("--no-arb", action="store_true", help="skip the AICLK arbiter / throttler tags")
-    ap.add_argument("--restore-interval", action="store_true", help="restore the firmware interval and exit")
+    ap.add_argument(
+        "--restore-interval", action="store_true", help="restore the firmware interval and exit"
+    )
     args = ap.parse_args()
     signal.signal(signal.SIGINT, _stop)
     signal.signal(signal.SIGTERM, _stop)
 
     pci_ids, devices, bh_chips = detect()
-    report: dict = {"chips_detected": len(pci_ids), "rows_per_chip": {}, "read_failures": {}, "interval": None,
-                    "counters_max": None, "restored": None}
+    report: dict = {
+        "chips_detected": len(pci_ids),
+        "rows_per_chip": {},
+        "read_failures": {},
+        "interval": {},
+        "counters_max": {},
+        "restored": None,
+    }
     if args.restore_interval:
-        report["interval"] = apply_interval(bh_chips, 0, clear_counters=False)
-        report["restored"] = report["interval"]["applied"]
+        restore = apply_interval(bh_chips, 0, clear_counters=False)
+        report["interval"], report["restored"] = restore, restore["applied"]
         write_report(args.report, report)
         print(json.dumps(report["interval"], indent=1))
         return 0
@@ -325,13 +386,17 @@ def main() -> int:
 
     delay = args.delay if args.delay is not None else DEFAULT_INTERVAL_MS / 2000
     if args.interval_ms > 0:
-        report["interval"] = apply_interval(bh_chips, args.interval_ms, clear_counters=True)
-        if report["interval"]["applied"]:
+        applied = apply_interval(bh_chips, args.interval_ms, clear_counters=True)
+        report["interval"] = applied
+        if applied["applied"]:
             if args.delay is None:
                 delay = max(0.002, args.interval_ms / 2000)  # two reads per firmware refresh
         else:
-            print(f"::warning::telemetry interval {args.interval_ms} ms applied on {report['interval']['applied_chips']}/{len(bh_chips)} "
-                  "chip(s); capturing at the firmware default (needs firmware >= 19.15, counters >= 19.16)", flush=True)
+            print(
+                f"::warning::telemetry interval {args.interval_ms} ms applied on {applied['applied_chips']}/{len(bh_chips)} "
+                "chip(s); capturing at the firmware default (needs firmware >= 19.15, counters >= 19.16)",
+                flush=True,
+            )
     arb = None if args.no_arb else ArbReader(bh_chips)
     sink = CsvSink(args.csv)
     rows: dict[int, int] = {}
@@ -394,9 +459,16 @@ def main() -> int:
         restore = apply_interval(bh_chips, 0, clear_counters=False)
         report["restored"] = restore["applied"]
         if not restore["applied"]:
-            print(f"::warning::telemetry interval restored on {restore['applied_chips']}/{len(bh_chips)} chip(s)", flush=True)
+            print(
+                f"::warning::telemetry interval restored on {restore['applied_chips']}/{len(bh_chips)} chip(s)",
+                flush=True,
+            )
     write_report(args.report, report)
-    print(f"stopped: {sum(rows.values())} rows from {len(rows)} chip(s)" + (" (reader error)" if rc else ""), flush=True)
+    print(
+        f"stopped: {sum(rows.values())} rows from {len(rows)} chip(s)"
+        + (" (reader error)" if rc else ""),
+        flush=True,
+    )
     return rc
 
 
